@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Avo.Inspector.Conformance</RootNamespace>
+    <AssemblyName>AvoInspector.Conformance</AssemblyName>
+    <!-- Conformance harness CLI: avo-inspector-conformance (runner-contract.md).
+         HARNESS_CONTRACT_VERSION: 1.0.0 -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AvoInspector\AvoInspector.csproj" />
+  </ItemGroup>
+
+</Project>
