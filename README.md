@@ -227,6 +227,15 @@ body. Certificate validation always uses the platform default and cannot be disa
 `AVO_INSPECTOR_MOCK_ENDPOINT` redirects requests to a test endpoint, but is **fail-closed**:
 a `Prod` instance ignores it unconditionally, so production traffic can never be redirected.
 
+> **`sessionId` (deliberate spec divergence).** Every event carries `sessionId: ""`. Spec
+> v1.0.0 §3.3/§7.3.1 told SDKs to *omit* `sessionId`, but the live Inspector ingestion pipeline
+> silently **drops** events that omit it (the request still returns `200 {"success":true}`, yet
+> nothing reaches the dashboard). Verified by field-bisection against the live API: adding only
+> `sessionId: ""` is necessary and sufficient to ingest. The spec is being corrected in
+> [avohq/spec-first-inspector-server-sdk#2](https://github.com/avohq/spec-first-inspector-server-sdk/pull/2)
+> (`sessionId` becomes a required wire field, empty string for server SDKs); this SDK already
+> implements that. `trackingId`/`visitorId`/`userId` remain absent.
+
 ---
 
 ## Thread safety

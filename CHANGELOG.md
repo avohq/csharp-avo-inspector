@@ -19,6 +19,12 @@ Initial release. Implements `avohq/spec-first-inspector-server-sdk` **v1.0.0**.
 - Wire protocol (SPEC §7): self-contained JSON array bodies, UUID v4 `messageId`,
   millisecond ISO-8601 `createdAt`, mandatory gzip for bodies ≥ 1024 bytes, a 10-second
   timeout, the §7.5 error taxonomy, and a fail-closed `AVO_INSPECTOR_MOCK_ENDPOINT` gate.
+- `sessionId: ""` on every event (deliberate divergence from spec v1.0.0 §3.3/§7.3.1).
+  The live ingestion pipeline drops events that omit `sessionId` despite returning
+  `200 {"success":true}`; verified by field-bisection against the live API. The spec is
+  being corrected in avohq/spec-first-inspector-server-sdk#2 (sessionId becomes a required
+  wire field); this SDK implements that. The vendored conformance fixtures and
+  `scripts/run-conformance.sh` (via `SPEC_REF`) track that branch, so the suite is 30/30.
 - Batching (SPEC §12): size + time/idle flush triggers, `maxQueueSize` FIFO bound,
   at-most-once delivery (no re-queue on failure), atomic swap-and-clear under concurrency,
   and a background flush timer that never holds the process open.

@@ -15,12 +15,12 @@
     "expected_request_count": 2,
     "expected_request_bodies": [
       [
-        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E1", "eventProperties": [ { "propertyName": "a", "propertyType": "int" } ] },
-        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s2", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E2", "eventProperties": [ { "propertyName": "b", "propertyType": "int" } ] },
-        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E3", "eventProperties": [ { "propertyName": "c", "propertyType": "int" } ] }
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E1", "eventProperties": [ { "propertyName": "a", "propertyType": "int" } ] },
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s2", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E2", "eventProperties": [ { "propertyName": "b", "propertyType": "int" } ] },
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E3", "eventProperties": [ { "propertyName": "c", "propertyType": "int" } ] }
       ],
       [
-        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s2", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E4", "eventProperties": [ { "propertyName": "d", "propertyType": "int" } ] }
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s2", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E4", "eventProperties": [ { "propertyName": "d", "propertyType": "int" } ] }
       ]
     ],
     "notes": "Proves the size trigger (call 1 fires at the 3rd enqueue and carries exactly 3 events, not 4) and that a single batch MAY mix streamId (s1/s2) and eventName. Each event is self-contained. The trailing flush() drains the 4th event and awaits all in-flight sends so the captured set is deterministic (SPEC.md §12.3, §12.4)."
@@ -39,8 +39,8 @@
     "expected_request_count": 1,
     "expected_request_bodies": [
       [
-        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E1", "eventProperties": [ { "propertyName": "a", "propertyType": "int" } ] },
-        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E2", "eventProperties": [ { "propertyName": "b", "propertyType": "int" } ] }
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E1", "eventProperties": [ { "propertyName": "a", "propertyType": "int" } ] },
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E2", "eventProperties": [ { "propertyName": "b", "propertyType": "int" } ] }
       ]
     ],
     "notes": "batchSize 30, so neither track reaches the size trigger; the buffer holds 2 events. flush() MUST force-send them as one batch and resolve (SPEC.md §4.6, §12.6)."
@@ -74,8 +74,8 @@
     "expected_request_count": 1,
     "expected_request_bodies": [
       [
-        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s2", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E2", "eventProperties": [ { "propertyName": "b", "propertyType": "int" } ] },
-        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E3", "eventProperties": [ { "propertyName": "c", "propertyType": "int" } ] }
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s2", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E2", "eventProperties": [ { "propertyName": "b", "propertyType": "int" } ] },
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E3", "eventProperties": [ { "propertyName": "c", "propertyType": "int" } ] }
       ]
     ],
     "notes": "maxQueueSize 2 caps the buffer. Appending E3 would exceed the cap, so the oldest event E1 MUST be dropped (FIFO) and the drop logged as a count only (SPEC.md §12.5). The flushed batch therefore contains E2 and E3, not E1."
@@ -99,12 +99,12 @@
     "expected_request_count": 2,
     "expected_request_bodies": [
       [
-        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E1", "eventProperties": [ { "propertyName": "a", "propertyType": "int" } ] },
-        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s2", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E2", "eventProperties": [ { "propertyName": "b", "propertyType": "int" } ] }
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E1", "eventProperties": [ { "propertyName": "a", "propertyType": "int" } ] },
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s2", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E2", "eventProperties": [ { "propertyName": "b", "propertyType": "int" } ] }
       ],
       [
-        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E3", "eventProperties": [ { "propertyName": "c", "propertyType": "int" } ] },
-        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s2", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E4", "eventProperties": [ { "propertyName": "d", "propertyType": "int" } ] }
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E3", "eventProperties": [ { "propertyName": "c", "propertyType": "int" } ] },
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s2", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E4", "eventProperties": [ { "propertyName": "d", "propertyType": "int" } ] }
       ]
     ],
     "notes": "batchSize 2: E1+E2 trigger the first send (mock returns 500), E3+E4 trigger the second (mock returns 200). A non-200 MUST NOT re-queue (SPEC.md §12.5), so the second batch is [E3, E4] — NOT [E1, E2, E3, E4]. Uses mock_responses for per-call status. flush() awaits both in-flight sends."

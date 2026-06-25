@@ -49,6 +49,7 @@
         "libPlatform": "<sdk-platform>",
         "messageId": "<uuid-v4>",
         "streamId": "",
+        "sessionId": "",
         "createdAt": "<iso8601>",
         "samplingRate": 1.0,
         "type": "event",

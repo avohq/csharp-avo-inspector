@@ -58,3 +58,4 @@ nunit-*.xml
 
 # Conformance: local checkout of the spec repo (suite-runner + mock server)
 .spec-repo/
+.gstack/
