@@ -81,6 +81,24 @@ var inspector = new AvoInspector(
 
 ---
 
+## Example CLI
+
+A runnable example lives in [`examples/AvoInspector.Example`](./examples/AvoInspector.Example).
+By default it runs fully **offline**: it prints the extracted schema for a few sample events,
+then tracks a small batch against a local loopback sink and prints the exact wire payloads
+the SDK would POST (showing batching, the size trigger, `flush()` draining a partial batch,
+and gzip kicking in for the larger body).
+
+```sh
+dotnet run --project examples/AvoInspector.Example            # offline dry run
+dotnet run --project examples/AvoInspector.Example -- --live  # send to the real API
+dotnet run --project examples/AvoInspector.Example -- --help
+```
+
+For `--live`, set `AVO_INSPECTOR_API_KEY` (and optionally `AVO_INSPECTOR_ENV=dev|staging|prod`).
+
+---
+
 ## ⚠️ Shutdown contract — you MUST flush before exit
 
 Buffered and in-flight events are held **in memory only** and are delivered
