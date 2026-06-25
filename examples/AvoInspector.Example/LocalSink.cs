@@ -23,11 +23,26 @@ namespace Avo.Inspector.Example
 
         public LocalSink()
         {
-            var port = FreePort();
-            BaseUrl = "http://127.0.0.1:" + port;
-            _listener = new HttpListener();
-            _listener.Prefixes.Add(BaseUrl + "/");
-            _listener.Start();
+            // FreePort() releases the socket before Start(), so the port can be taken in between
+            // (TOCTOU). Retry with a fresh port instead of trusting the probed one.
+            for (var attempt = 0; ; attempt++)
+            {
+                var port = FreePort();
+                var baseUrl = "http://127.0.0.1:" + port;
+                var listener = new HttpListener();
+                listener.Prefixes.Add(baseUrl + "/");
+                try
+                {
+                    listener.Start();
+                    BaseUrl = baseUrl;
+                    _listener = listener;
+                    break;
+                }
+                catch (HttpListenerException) when (attempt < 4)
+                {
+                    listener.Close();
+                }
+            }
             _running = true;
             _ = Task.Run(LoopAsync);
         }
@@ -59,7 +74,17 @@ namespace Avo.Inspector.Example
                     context.Response.OutputStream.Write(payload, 0, payload.Length);
                     context.Response.OutputStream.Close();
                 }
-                catch { /* ignore in the demo sink */ }
+                catch
+                {
+                    // Always close the response, even on failure — otherwise the SDK's send hangs
+                    // until its 10s timeout (turning the dry-run Flush() into a slow stall).
+                    try
+                    {
+                        context.Response.StatusCode = 500;
+                        context.Response.Close();
+                    }
+                    catch { /* ignore in the demo sink */ }
+                }
             }
         }
 

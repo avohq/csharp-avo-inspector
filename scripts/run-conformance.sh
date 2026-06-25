@@ -31,13 +31,15 @@ echo "==> Building conformance harness"
 dotnet build "$HARNESS_PROJECT" -c Release
 
 echo "==> Fetching spec repo (suite-runner + mock server) @ $SPEC_REF"
-if [ -d "$SPEC_DIR/.git" ]; then
-  git -C "$SPEC_DIR" fetch origin --quiet || true
-else
-  git clone "$SPEC_REPO_URL" "$SPEC_DIR"
+# Fail-closed + deterministic: fetch the exact ref and hard-checkout FETCH_HEAD. With `set -e`
+# a fetch/checkout failure aborts the run (no silent fallback to a stale/drifted .spec-repo), and
+# --force discards any local drift so every run reflects exactly the remote $SPEC_REF.
+if [ ! -d "$SPEC_DIR/.git" ]; then
+  git clone --quiet "$SPEC_REPO_URL" "$SPEC_DIR"
 fi
-git -C "$SPEC_DIR" checkout "$SPEC_REF" --quiet
-git -C "$SPEC_DIR" pull --ff-only origin "$SPEC_REF" --quiet 2>/dev/null || true
+git -C "$SPEC_DIR" fetch --quiet origin "$SPEC_REF"
+git -C "$SPEC_DIR" -c advice.detachedHead=false checkout --quiet --force FETCH_HEAD
+echo "    spec @ $(git -C "$SPEC_DIR" rev-parse --short HEAD) ($SPEC_REF)"
 
 echo "==> Running conformance suite"
 node "$SPEC_DIR/conformance/runner/suite-runner.mjs" --harness "dotnet $HARNESS_DLL"

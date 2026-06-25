@@ -56,6 +56,8 @@ namespace Avo.Inspector
         private readonly HashSet<Task> _pendingSends = new HashSet<Task>();
         private bool _destroyed;
         private Timer? _flushTimer;
+        // Cancelled by Destroy() to abort in-flight HTTP sends (SPEC.md §4.5 — abandon in-flight).
+        private readonly CancellationTokenSource _cts = new CancellationTokenSource();
 
         /// <summary>
         /// Constructs an instance from strongly-typed options (SPEC.md §4.1, §5). Throws
@@ -276,7 +278,9 @@ namespace Avo.Inspector
                 {
                     if (_destroyed)
                     {
-                        return eventSchema; // destroyed mid-flight: do not enqueue or send.
+                        // Destroyed mid-flight: do not enqueue or send. Resolve [] to match the
+                        // post-destroy no-op contract (SPEC.md §4.5).
+                        return new List<SchemaEntry>();
                     }
                     _pendingBatch.Add(body);
                     // SPEC.md §12.5 — FIFO-oldest drop on overflow.
@@ -393,6 +397,11 @@ namespace Avo.Inspector
                 _flushTimer = null;
             }
             timer?.Dispose();
+            // Abandon in-flight requests (SPEC.md §4.5): cancel the token so any active HTTP send
+            // aborts instead of completing on the wire. Not disposed — in-flight sends may still
+            // hold a linked token derived from it.
+            try { _cts.Cancel(); }
+            catch (ObjectDisposedException) { /* already torn down */ }
             // samplingRate, apiKey, env, version, appName, and process-wide shouldLog persist.
         }
 
@@ -464,6 +473,16 @@ namespace Avo.Inspector
         /// </summary>
         private Task<SendResult> DispatchSend(List<WireEvent> batch)
         {
+            lock (_lock)
+            {
+                if (_destroyed)
+                {
+                    // SPEC.md §4.5/§12.6 — after destroy(), a batch must NOT reach the wire. Guard
+                    // here (before the send starts), not only before tracking, so a timer/size flush
+                    // that dropped the lock just before destroy() cannot leak a batch.
+                    return Task.FromResult(new SendResult(SendStatus.Error, null));
+                }
+            }
             var task = SendBatchAsync(batch.ToArray());
             lock (_lock)
             {
@@ -471,6 +490,8 @@ namespace Avo.Inspector
                 {
                     _pendingSends.Add(task);
                 }
+                // If destroy() raced in after the guard above, the send was started with _cts.Token,
+                // so Destroy()'s Cancel() aborts it; we simply don't track it.
             }
             task.ContinueWith(
                 completed =>
@@ -489,7 +510,7 @@ namespace Avo.Inspector
         private async Task<SendResult> SendBatchAsync(WireEvent[] batch)
         {
             var endpoint = ResolveEndpoint();
-            var result = await InspectorHttpSender.SendAsync(endpoint, batch, _shouldLog).ConfigureAwait(false);
+            var result = await InspectorHttpSender.SendAsync(endpoint, batch, _shouldLog, _cts.Token).ConfigureAwait(false);
             if (result.Status == SendStatus.Ok && result.NewSamplingRate.HasValue)
             {
                 // SPEC.md §7.4/§7.7 — update samplingRate only on 200, under the lock.

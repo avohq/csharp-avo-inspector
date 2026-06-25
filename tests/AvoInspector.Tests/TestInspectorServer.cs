@@ -28,11 +28,25 @@ namespace Avo.Inspector.Tests
 
         public TestInspectorServer()
         {
-            var port = FindFreePort();
-            BaseUrl = "http://127.0.0.1:" + port;
-            _listener = new HttpListener();
-            _listener.Prefixes.Add(BaseUrl + "/");
-            _listener.Start();
+            // FindFreePort() releases the socket before Start(); retry to avoid a TOCTOU bind race.
+            for (var attempt = 0; ; attempt++)
+            {
+                var port = FindFreePort();
+                var baseUrl = "http://127.0.0.1:" + port;
+                var listener = new HttpListener();
+                listener.Prefixes.Add(baseUrl + "/");
+                try
+                {
+                    listener.Start();
+                    BaseUrl = baseUrl;
+                    _listener = listener;
+                    break;
+                }
+                catch (HttpListenerException) when (attempt < 4)
+                {
+                    listener.Close();
+                }
+            }
             _running = true;
             _ = Task.Run(Loop);
         }
@@ -93,7 +107,10 @@ namespace Avo.Inspector.Tests
                 }
                 catch
                 {
-                    // ignore per-request errors in the test mock
+                    // Abort the response on failure so the SDK's send fails fast instead of
+                    // hanging until its 10s timeout.
+                    try { context.Response.Abort(); }
+                    catch { /* ignore per-request errors in the test mock */ }
                 }
             }
         }

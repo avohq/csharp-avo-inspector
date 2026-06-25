@@ -12,7 +12,10 @@ namespace Avo.Inspector
     {
         /// <summary>
         /// SDK library version, sent on the wire as <c>libVersion</c>. Plain SemVer, no suffix
-        /// (SPEC.md §7.3.3). Update this on every release.
+        /// (SPEC.md §7.3.3 mandates a hardcoded constant in a dedicated version file).
+        /// <para><b>Keep this in sync with <c>&lt;Version&gt;</c> in AvoInspector.csproj on every
+        /// release.</b> They are two files by spec necessity; the <c>VersionTests</c> drift-guard
+        /// test fails CI if they diverge.</para>
         /// </summary>
         public const string LibVersion = "1.0.0";
 

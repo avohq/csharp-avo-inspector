@@ -65,7 +65,9 @@ namespace Avo.Inspector.Internal
         /// <param name="endpoint">Resolved endpoint URL (SPEC.md §7.1).</param>
         /// <param name="batch">The events to send as a single JSON array.</param>
         /// <param name="shouldLog">Whether diagnostics may be written to stderr.</param>
-        public static async Task<SendResult> SendAsync(string endpoint, WireEvent[] batch, bool shouldLog)
+        /// <param name="abortToken">Cancelled by <c>Destroy()</c> to abandon an in-flight send.</param>
+        public static async Task<SendResult> SendAsync(
+            string endpoint, WireEvent[] batch, bool shouldLog, CancellationToken abortToken = default)
         {
             byte[] rawBytes;
             try
@@ -92,7 +94,8 @@ namespace Avo.Inspector.Internal
                 // else: fall back to the uncompressed body (SPEC.md §7.3.5).
             }
 
-            using (var cts = new CancellationTokenSource(RequestTimeoutMs))
+            using (var timeoutCts = new CancellationTokenSource(RequestTimeoutMs))
+            using (var cts = CancellationTokenSource.CreateLinkedTokenSource(abortToken, timeoutCts.Token))
             using (var content = new ByteArrayContent(payload))
             {
                 content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
@@ -125,9 +128,12 @@ namespace Avo.Inspector.Internal
                     }
                     catch (Exception ex)
                     {
-                        // SPEC.md §7.5/§7.6 — network error or 10s timeout. Swallow; do not re-queue.
-                        // Never log the request body or apiKey (§7.5.1) — only the error category.
-                        var label = ex is OperationCanceledException ? "Request timed out" : "Request failed";
+                        // SPEC.md §7.5/§7.6 — network error, 10s timeout, or destroy()-abandon.
+                        // Swallow; do not re-queue. Never log the request body or apiKey (§7.5.1).
+                        string label;
+                        if (abortToken.IsCancellationRequested) label = "Request abandoned (destroyed)";
+                        else if (ex is OperationCanceledException) label = "Request timed out";
+                        else label = "Request failed";
                         Logger.Error(shouldLog, "send failed (" + label + ")");
                         return new SendResult(SendStatus.Error, null);
                     }

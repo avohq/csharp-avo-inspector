@@ -19,15 +19,22 @@ namespace Avo.Inspector
     /// <summary>Helpers for mapping <see cref="AvoInspectorEnv"/> to/from its wire string (SPEC.md §6.1).</summary>
     public static class AvoInspectorEnvExtensions
     {
-        /// <summary>Returns the exact wire string for an environment (SPEC.md §6.1).</summary>
+        /// <summary>
+        /// Returns the exact wire string for an environment (SPEC.md §6.1). Throws on an
+        /// out-of-range enum value (e.g. an invalid <c>(AvoInspectorEnv)cast</c>) rather than
+        /// silently coercing it to <c>"dev"</c> — string-based env fallback belongs to
+        /// <see cref="TryParse"/>, not here.
+        /// </summary>
         public static string ToWireString(this AvoInspectorEnv env)
         {
             switch (env)
             {
+                case AvoInspectorEnv.Dev: return "dev";
                 case AvoInspectorEnv.Staging: return "staging";
                 case AvoInspectorEnv.Prod: return "prod";
-                case AvoInspectorEnv.Dev:
-                default: return "dev";
+                default:
+                    throw new System.ArgumentOutOfRangeException(
+                        nameof(env), env, "Unknown AvoInspectorEnv value.");
             }
         }
 

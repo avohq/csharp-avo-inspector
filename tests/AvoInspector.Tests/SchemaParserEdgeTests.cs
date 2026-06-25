@@ -49,6 +49,28 @@ namespace Avo.Inspector.Tests
         }
 
         [Fact]
+        public void Nested_non_object_valued_dictionaries_map_as_objects()
+        {
+            // A nested map whose value type is NOT object? (e.g. Dictionary<string,int>) must still
+            // map to "object" with recursive children — not fall through to the array branch and
+            // serialize as a list of KeyValuePair entries.
+            var schema = Inspector.ExtractSchema(Props.Of(
+                ("counts", new Dictionary<string, int> { ["a"] = 1, ["b"] = 2 }),
+                ("labels", new Dictionary<string, string> { ["x"] = "hi" })));
+
+            var counts = schema.First(e => e.PropertyName == "counts");
+            Assert.Equal("object", counts.PropertyType);
+            var countsChildren = Assert.IsType<List<SchemaEntry>>(counts.Children);
+            Assert.Equal(2, countsChildren.Count);
+            Assert.All(countsChildren, c => Assert.Equal("int", c.PropertyType));
+
+            var labels = schema.First(e => e.PropertyName == "labels");
+            Assert.Equal("object", labels.PropertyType);
+            var labelsChildren = Assert.IsType<List<SchemaEntry>>(labels.Children);
+            Assert.Equal("string", labelsChildren.Single().PropertyType);
+        }
+
+        [Fact]
         public void Deeply_nested_input_does_not_throw_and_truncates()
         {
             // SPEC.md §9.3.2: the parser MUST NOT crash on pathological nesting; beyond the depth

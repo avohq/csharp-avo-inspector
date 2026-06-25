@@ -11,14 +11,20 @@ namespace Avo.Inspector.Tests
         [Fact]
         public void Logging_default_is_tied_to_env()
         {
-            _ = new AvoInspector("k", "staging", "1.0.0");
+            var staging = new AvoInspector("k", "staging", "1.0.0");
             Assert.False(AvoInspector.ShouldLogForTesting);
 
-            _ = new AvoInspector("k", "dev", "1.0.0");
+            var dev = new AvoInspector("k", "dev", "1.0.0");
             Assert.True(AvoInspector.ShouldLogForTesting);
 
-            _ = new AvoInspector("k", "prod", "1.0.0");
+            var prod = new AvoInspector("k", "prod", "1.0.0");
             Assert.False(AvoInspector.ShouldLogForTesting);
+
+            // staging/prod default to batchSize 30, which starts a scheduled-flush timer; destroy
+            // them so the timers don't leak across tests.
+            staging.Destroy();
+            dev.Destroy();
+            prod.Destroy();
         }
 
         [Fact]
@@ -34,6 +40,9 @@ namespace Avo.Inspector.Tests
 
             b.EnableLogging(false);
             Assert.False(AvoInspector.ShouldLogForTesting); // b's call affects the same shared flag
+
+            a.Destroy();
+            b.Destroy();
         }
     }
 }

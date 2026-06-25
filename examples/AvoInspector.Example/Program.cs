@@ -139,6 +139,16 @@ namespace Avo.Inspector.Example
             }
 
             var env = Environment.GetEnvironmentVariable("AVO_INSPECTOR_ENV") ?? "dev";
+
+            // --live targets the real API. The SDK honors AVO_INSPECTOR_MOCK_ENDPOINT for any
+            // non-prod env, so a leftover override (e.g. from a prior dry run) would silently
+            // redirect us away from Avo. Clear it for this process so --live really goes live.
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AVO_INSPECTOR_MOCK_ENDPOINT")))
+            {
+                Console.Error.WriteLine("warning: ignoring AVO_INSPECTOR_MOCK_ENDPOINT in --live mode.");
+                Environment.SetEnvironmentVariable("AVO_INSPECTOR_MOCK_ENDPOINT", null);
+            }
+
             Console.WriteLine($"Sending to env \"{env}\" as \"{InspectorVersion.LibPlatform}\" SDK v{InspectorVersion.LibVersion} ...");
 
             var inspector = new AvoInspector(apiKey!, env, "1.4.2", appName: "checkout-service");

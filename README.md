@@ -106,9 +106,15 @@ Buffered and in-flight events are held **in memory only** and are delivered
 does **not** retry failed sends. If your process exits while events are buffered or a
 send is in flight, those events are lost.
 
-Therefore, **callers MUST call `await inspector.Flush()` (or `await` the task returned
-by `TrackSchemaFromEvent`) before the process or serverless handler returns** if events
-may be in flight or buffered.
+Therefore, **callers MUST call `await inspector.Flush()` before the process or serverless
+handler returns** if events may be in flight or buffered. `Flush()` is the only universal
+barrier — it force-flushes the pending batch and awaits all in-flight sends.
+
+> Do **not** rely on `await`-ing `TrackSchemaFromEvent` as a substitute. It resolves at
+> *enqueue* time, and when `BatchSize > 1` the event may still be sitting in the buffer
+> (or its batch may still be on the wire) after the task completes. Only in immediate-send
+> mode (`Dev`, where `BatchSize` is forced to 1) does awaiting the call also await its send —
+> and even then `Flush()` is the contract to depend on.
 
 ```csharp
 // AWS Lambda / Azure Functions / Google Cloud Functions handler

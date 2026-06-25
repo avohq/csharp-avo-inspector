@@ -44,9 +44,9 @@ namespace Avo.Inspector
         /// </summary>
         private static object Mapping(object? value, int depth)
         {
-            if (value is IDictionary<string, object?> dict)
+            if (IsObjectMap(value))
             {
-                return MapObject(dict, depth);
+                return MapObject(value!, depth);
             }
             if (value is string)
             {
@@ -59,10 +59,10 @@ namespace Avo.Inspector
             return GetPropValueType(value);
         }
 
-        private static List<SchemaEntry> MapObject(IDictionary<string, object?> dict, int depth)
+        private static List<SchemaEntry> MapObject(object map, int depth)
         {
-            var result = new List<SchemaEntry>(dict.Count);
-            foreach (var kv in dict)
+            var result = new List<SchemaEntry>();
+            foreach (var kv in EnumerateMap(map))
             {
                 var val = kv.Value;
                 var entry = new SchemaEntry(kv.Key, GetPropValueType(val));
@@ -108,7 +108,7 @@ namespace Avo.Inspector
         /// </summary>
         private static string GetPropValueType(object? value)
         {
-            if (value is IDictionary<string, object?>)
+            if (IsObjectMap(value))
             {
                 return "object";
             }
@@ -163,7 +163,34 @@ namespace Avo.Inspector
 
         /// <summary>True when a value gets a <c>children</c> array (a non-null object or array).</summary>
         private static bool IsComplex(object? value)
-            => value is IDictionary<string, object?> || (!(value is string) && value is IEnumerable);
+            => IsObjectMap(value) || (!(value is string) && value is IEnumerable);
+
+        /// <summary>
+        /// True when the value is a string-keyed map and should map to an <c>"object"</c> schema
+        /// — any <see cref="IDictionary{TKey,TValue}"/> with string keys (e.g. the
+        /// <c>object?</c>-valued map the SDK takes, but also <c>Dictionary&lt;string,int&gt;</c>,
+        /// <c>Dictionary&lt;string,string&gt;</c>, etc.) or any non-generic
+        /// <see cref="System.Collections.IDictionary"/>. Without this, a non-<c>object?</c> map would
+        /// fall through to the array branch and serialize as a list of <c>KeyValuePair</c> entries.
+        /// </summary>
+        private static bool IsObjectMap(object? value)
+            => value is IDictionary<string, object?> || value is System.Collections.IDictionary;
+
+        /// <summary>Enumerates a map's entries as string-keyed pairs (see <see cref="IsObjectMap"/>).</summary>
+        private static IEnumerable<KeyValuePair<string, object?>> EnumerateMap(object map)
+        {
+            if (map is IDictionary<string, object?> typed)
+            {
+                return typed;
+            }
+            var raw = (System.Collections.IDictionary)map;
+            var entries = new List<KeyValuePair<string, object?>>(raw.Count);
+            foreach (System.Collections.DictionaryEntry e in raw)
+            {
+                entries.Add(new KeyValuePair<string, object?>(e.Key?.ToString() ?? string.Empty, e.Value));
+            }
+            return entries;
+        }
 
         private static object? FirstOrNull(IEnumerable source)
         {
