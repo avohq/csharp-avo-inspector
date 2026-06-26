@@ -280,6 +280,23 @@ dotnet test       # unit tests + the 13 schema-extraction golden fixtures
 - `InspectorVersion.SpecVersion` records the spec contract version this SDK implements.
   When a new `[WIRE]`-tagged spec release appears, regenerate/update and bump it.
 
+### Publishing a release (one tag to publish)
+
+The package is distributed on [NuGet](https://www.nuget.org/) (`dotnet add package AvoInspector`).
+Releases are automated by [`.github/workflows/publish.yml`](./.github/workflows/publish.yml):
+
+1. Bump **both** `<Version>` in `src/AvoInspector/AvoInspector.csproj` **and**
+   `InspectorVersion.LibVersion` to the new SemVer (the `VersionTests` drift-guard and the
+   publish workflow both fail if they disagree). Update `CHANGELOG.md`.
+2. Tag and push: `git tag v1.0.1 && git push origin v1.0.1`.
+3. The workflow verifies the tag matches `<Version>`, runs the tests, and pushes the
+   `.nupkg` + `.snupkg` (symbols) to nuget.org.
+
+**One-time setup:** add a repo secret `NUGET_API_KEY` (nuget.org → Account → API Keys).
+The package ships the README, XML docs (IntelliSense), and SourceLink symbols, so consumers
+can step into the SDK's source while debugging. To build a package locally:
+`dotnet pack src/AvoInspector/AvoInspector.csproj -c Release -o artifacts`.
+
 ---
 
 ## License

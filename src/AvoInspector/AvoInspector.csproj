@@ -20,9 +20,31 @@
     <PackageTags>avo;inspector;analytics;observability;telemetry</PackageTags>
     <PackageProjectUrl>https://github.com/avohq/csharp-avo-inspector</PackageProjectUrl>
     <RepositoryUrl>https://github.com/avohq/csharp-avo-inspector</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <!-- Renders the README on the nuget.org package page (packed at the package root below). -->
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <!-- avohq/spec-first-inspector-server-sdk spec version implemented by this SDK. -->
     <AvoInspectorSpecVersion>1.0.0</AvoInspectorSpecVersion>
+
+    <!-- Symbols + SourceLink: ship a .snupkg and embed repo/commit info so consumers can
+         step into this SDK's source while debugging. -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <!-- Reproducible package builds on CI (deterministic paths + SourceLink). -->
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
+
+  <!-- Pack the repo-root README at the package root for PackageReadmeFile. -->
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <!-- SourceLink for github.com (build-time only; never a runtime dependency). -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
+  </ItemGroup>
 
   <!-- System.Text.Json is in-box on net8.0; netstandard2.0 needs the package. -->
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
