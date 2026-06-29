@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Xunit;
@@ -11,6 +12,8 @@ namespace Avo.Inspector.Tests
     public class SchemaParserEdgeTests
     {
         private static readonly AvoInspector Inspector = new AvoInspector("k", "dev", "1.0.0");
+
+        private enum Color { Red, Green }
 
         [Fact]
         public void Whole_valued_float_classifies_as_float()
@@ -46,6 +49,44 @@ namespace Avo.Inspector.Tests
         {
             var schema = Inspector.ExtractSchema(Props.Of(("amount", 9.99m)));
             Assert.Equal("float", TypeOf(schema, "amount"));
+        }
+
+        [Fact]
+        public void Common_clr_string_like_types_classify_as_string()
+        {
+            // .NET types with no JSON-primitive equivalent that serialize to strings on the wire.
+            var schema = Inspector.ExtractSchema(Props.Of(
+                ("when", DateTime.UtcNow),
+                ("whenOffset", DateTimeOffset.UtcNow),
+                ("span", TimeSpan.FromSeconds(5)),
+                ("id", Guid.NewGuid()),
+                ("ch", 'x'),
+                ("uri", new Uri("https://avo.app"))));
+
+            foreach (var name in new[] { "when", "whenOffset", "span", "id", "ch", "uri" })
+            {
+                Assert.Equal("string", TypeOf(schema, name));
+            }
+        }
+
+        [Fact]
+        public void Enum_classifies_as_unknown_and_list_of_unknown_normalizes_to_list_object()
+        {
+            var schema = Inspector.ExtractSchema(Props.Of(
+                ("color", Color.Red),
+                ("colors", new List<object?> { Color.Red, Color.Green })));
+
+            Assert.Equal("unknown", TypeOf(schema, "color"));
+            // "list(unknown)" is not in the spec's propertyType enum, so it normalizes to "list(object)".
+            Assert.Equal("list(object)", TypeOf(schema, "colors"));
+        }
+
+        [Fact]
+        public void List_of_string_like_clr_types_classifies_as_list_string()
+        {
+            var schema = Inspector.ExtractSchema(Props.Of(
+                ("dates", new List<object?> { DateTime.UtcNow, DateTime.UtcNow })));
+            Assert.Equal("list(string)", TypeOf(schema, "dates"));
         }
 
         [Fact]

@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 
@@ -119,7 +120,11 @@ namespace Avo.Inspector
                 {
                     return "list(string)"; // empty array, or first element null/undefined.
                 }
-                return "list(" + GetBasicPropType(first) + ")";
+                var elementType = GetBasicPropType(first);
+                // Never emit a type the SDK's own spec forbids: `list(unknown)` is not in the
+                // schema-entry `propertyType` enum, so an unknown first element normalizes to
+                // `list(object)` (which the Inspector backend also does).
+                return elementType == "unknown" ? "list(object)" : "list(" + elementType + ")";
             }
             return GetBasicPropType(value);
         }
@@ -150,6 +155,21 @@ namespace Avo.Inspector
                     // SPEC.md §9.3.1: the declared/runtime float type is authoritative, so a
                     // whole-valued float such as 0.0 MUST classify as "float".
                     return "float";
+                case char:
+                case Guid:
+                case DateTime:
+                case DateTimeOffset:
+                case TimeSpan:
+                case Uri:
+#if NET6_0_OR_GREATER
+                case DateOnly:
+                case TimeOnly:
+#endif
+                    // Common .NET types that have no JSON-primitive equivalent but serialize to
+                    // strings on the wire — classify them as "string" rather than "unknown" so the
+                    // schema is useful. Enums and other custom types stay "unknown" (their wire
+                    // representation is ambiguous; pre-convert if a specific type matters).
+                    return "string";
                 case IDictionary<string, object?>:
                     return "object";
                 case IEnumerable:

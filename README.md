@@ -198,8 +198,25 @@ because the flag is process-wide, it would affect production instances sharing t
 Each property is classified into a `propertyType`:
 `string`, `int`, `float`, `boolean`, `null`, `object`, `unknown`, or a list wrapper such
 as `list(string)`, `list(int)`, `list(object)`, etc. Objects and lists carry recursive
-`children`. The C# numeric runtime type is authoritative: `int`/`long` → `int`,
-`float`/`double`/`decimal` → `float` (so `0.0` is `float`, not `int`).
+`children`. The C# runtime type is authoritative.
+
+| CLR type | `propertyType` |
+|---|---|
+| `string`, `char` | `string` |
+| `int`/`long`/`short`/`byte` (and unsigned) | `int` |
+| `float`/`double`/`decimal` | `float` (so `0.0` is `float`, not `int`) |
+| `bool` | `boolean` |
+| `null` | `null` |
+| `DateTime`, `DateTimeOffset`, `TimeSpan`, `DateOnly`, `TimeOnly`, `Guid`, `Uri` | `string` (these have no JSON-primitive type but serialize to strings) |
+| `IDictionary` / any string-keyed map | `object` (recursive `children`) |
+| arrays / `IEnumerable` | `list(<element>)` from the first element |
+| anything else (enums, custom structs/classes) | `unknown` |
+
+> **Enums and custom types map to `unknown`.** Their wire representation is ambiguous (an enum may
+> serialize as its name or its number, a class however your serializer renders it), so the SDK does
+> not guess. If you want a specific type, pre-convert the value (e.g. `myEnum.ToString()` for
+> `string`, `(int)myEnum` for `int`) before tracking. A list whose elements are `unknown` is emitted
+> as `list(object)`.
 
 ```text
 { "user": { "id": 1, "tags": ["a", "b"] }, "scores": [1, 2] }
