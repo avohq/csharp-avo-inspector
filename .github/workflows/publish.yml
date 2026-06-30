@@ -4,7 +4,9 @@ name: Publish to NuGet
 # <Version> in AvoInspector.csproj AND InspectorVersion.LibVersion to 1.0.1)
 # and this packs + pushes AvoInspector to nuget.org.
 #
-# Requires a repo secret NUGET_API_KEY (nuget.org → Account → API Keys).
+# Uses NuGet trusted publishing (OIDC) — no long-lived API key secret needed.
+# Prereq: configure a Trusted Publisher policy on nuget.org pointing at this
+# repo + workflow file before pushing the first tag.
 
 on:
   push:
@@ -12,6 +14,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write  # required for OIDC token exchange with nuget.org
 
 jobs:
   publish:
@@ -42,11 +45,13 @@ jobs:
       - name: Pack (deterministic; produces .nupkg + .snupkg)
         run: dotnet pack src/AvoInspector/AvoInspector.csproj -c Release -o artifacts
 
+      - name: Login to nuget.org via OIDC
+        uses: NuGet/login@v1
+        id: nuget-login
+
       - name: Push package + symbols to nuget.org
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: >-
           dotnet nuget push "artifacts/*.nupkg"
-          --api-key "$NUGET_API_KEY"
+          --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"
           --source https://api.nuget.org/v3/index.json
           --skip-duplicate
