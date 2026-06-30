@@ -13,7 +13,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\AvoInspector\AvoInspector.csproj" />
+    <PackageReference Include="AvoInspector" Version="1.0.0" />
   </ItemGroup>
 
 </Project>
