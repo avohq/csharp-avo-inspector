@@ -1,0 +1,474 @@
+[
+  {
+    "fixture_id": "fixture-1",
+    "description": "Basic primitives: boolean, int, string, float are classified correctly",
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0"
+    },
+    "input": {
+      "a": true,
+      "b": 1,
+      "c": "hello",
+      "d": 3.14
+    },
+    "expected": [
+      {
+        "propertyName": "a",
+        "propertyType": "boolean"
+      },
+      {
+        "propertyName": "b",
+        "propertyType": "int"
+      },
+      {
+        "propertyName": "c",
+        "propertyType": "string"
+      },
+      {
+        "propertyName": "d",
+        "propertyType": "float"
+      }
+    ]
+  },
+  {
+    "fixture_id": "fixture-2",
+    "description": "Null values are classified as null; undefined is treated identically to null",
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0"
+    },
+    "input": {
+      "a": null,
+      "b": null
+    },
+    "expected": [
+      {
+        "propertyName": "a",
+        "propertyType": "null"
+      },
+      {
+        "propertyName": "b",
+        "propertyType": "null"
+      }
+    ]
+  },
+  {
+    "fixture_id": "fixture-3",
+    "description": "Empty and falsy values: false->boolean, 0->int, empty string->string, null->null, {}->object with children [], []->list(string) with children []. NOTE: float-zero (0.0) is intentionally excluded from this universal fixture — classifying 0.0 as 'float' is a statically-typed-language-only invariant (the canonical JS/TS reference parser emits 'int' for whole-valued floats). See SPEC.md §9.3.1.",
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0"
+    },
+    "input": {
+      "a": false,
+      "b": 0,
+      "c": "",
+      "e": null,
+      "f": {},
+      "g": []
+    },
+    "expected": [
+      {
+        "propertyName": "a",
+        "propertyType": "boolean"
+      },
+      {
+        "propertyName": "b",
+        "propertyType": "int"
+      },
+      {
+        "propertyName": "c",
+        "propertyType": "string"
+      },
+      {
+        "propertyName": "e",
+        "propertyType": "null"
+      },
+      {
+        "propertyName": "f",
+        "propertyType": "object",
+        "children": []
+      },
+      {
+        "propertyName": "g",
+        "propertyType": "list(string)",
+        "children": []
+      }
+    ]
+  },
+  {
+    "fixture_id": "fixture-4",
+    "description": "Nested object: children contains recursively extracted schema",
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0"
+    },
+    "input": {
+      "user": {
+        "name": "Alice",
+        "age": 30
+      }
+    },
+    "expected": [
+      {
+        "propertyName": "user",
+        "propertyType": "object",
+        "children": [
+          {
+            "propertyName": "name",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "age",
+            "propertyType": "int"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "fixture_id": "fixture-5",
+    "description": "Simple list of strings: children is an array of deduplicated type strings",
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0"
+    },
+    "input": {
+      "tags": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
+    "expected": [
+      {
+        "propertyName": "tags",
+        "propertyType": "list(string)",
+        "children": [
+          "string"
+        ]
+      }
+    ]
+  },
+  {
+    "fixture_id": "fixture-6",
+    "description": "Empty array defaults to list(string) with empty children",
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0"
+    },
+    "input": {
+      "items": []
+    },
+    "expected": [
+      {
+        "propertyName": "items",
+        "propertyType": "list(string)",
+        "children": []
+      }
+    ]
+  },
+  {
+    "fixture_id": "fixture-7",
+    "description": "Heterogeneous array: propertyType is determined by first element only (1.2 -> list(float)); children contains mapping() of each element after removeDuplicates",
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0"
+    },
+    "input": {
+      "mixed": [
+        1.2,
+        "two",
+        {
+          "three": 3
+        }
+      ]
+    },
+    "expected": [
+      {
+        "propertyName": "mixed",
+        "propertyType": "list(float)",
+        "children": [
+          "float",
+          "string",
+          [
+            {
+              "propertyName": "three",
+              "propertyType": "int"
+            }
+          ]
+        ]
+      }
+    ]
+  },
+  {
+    "fixture_id": "fixture-8",
+    "description": "Null top-level input returns empty array",
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0"
+    },
+    "input": null,
+    "expected": []
+  },
+  {
+    "fixture_id": "fixture-9",
+    "description": "Complex mixed-type array with nested structures: objects and nested arrays in children",
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0"
+    },
+    "input": {
+      "prop7": [
+        "a",
+        "list",
+        {
+          "obj in list": true,
+          "int field": 1
+        },
+        [
+          "another",
+          "list"
+        ],
+        [
+          1,
+          2
+        ]
+      ]
+    },
+    "expected": [
+      {
+        "propertyName": "prop7",
+        "propertyType": "list(string)",
+        "children": [
+          "string",
+          [
+            {
+              "propertyName": "obj in list",
+              "propertyType": "boolean"
+            },
+            {
+              "propertyName": "int field",
+              "propertyType": "int"
+            }
+          ],
+          [
+            "string"
+          ],
+          [
+            "int"
+          ]
+        ]
+      }
+    ]
+  },
+  {
+    "fixture_id": "fixture-10",
+    "description": "List deduplication: duplicate primitive values collapse to one occurrence per type string",
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0"
+    },
+    "input": {
+      "vals": [
+        "true",
+        "false",
+        true,
+        10,
+        "true",
+        true,
+        11,
+        10,
+        0.1,
+        0.1
+      ]
+    },
+    "expected": [
+      {
+        "propertyName": "vals",
+        "propertyType": "list(string)",
+        "children": [
+          "string",
+          "boolean",
+          "int",
+          "float"
+        ]
+      }
+    ]
+  },
+  {
+    "fixture_id": "fixture-11",
+    "description": "Object with a nested list property: children contains both list and scalar SchemaEntries",
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0"
+    },
+    "input": {
+      "event": {
+        "tags": [
+          "promo",
+          "sale"
+        ],
+        "count": 2
+      }
+    },
+    "expected": [
+      {
+        "propertyName": "event",
+        "propertyType": "object",
+        "children": [
+          {
+            "propertyName": "tags",
+            "propertyType": "list(string)",
+            "children": [
+              "string"
+            ]
+          },
+          {
+            "propertyName": "count",
+            "propertyType": "int"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "fixture_id": "fixture-12",
+    "description": "All property types in one event: string, int, float, boolean, null, object, list(string), list(int), list(float), list(boolean)",
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0"
+    },
+    "input": {
+      "str": "hello",
+      "int": 42,
+      "float": 3.14,
+      "bool": true,
+      "null_val": null,
+      "obj": {
+        "key": "val"
+      },
+      "list_str": [
+        "a"
+      ],
+      "list_int": [
+        1,
+        2
+      ],
+      "list_float": [
+        1.1
+      ],
+      "list_bool": [
+        true,
+        false
+      ]
+    },
+    "expected": [
+      {
+        "propertyName": "str",
+        "propertyType": "string"
+      },
+      {
+        "propertyName": "int",
+        "propertyType": "int"
+      },
+      {
+        "propertyName": "float",
+        "propertyType": "float"
+      },
+      {
+        "propertyName": "bool",
+        "propertyType": "boolean"
+      },
+      {
+        "propertyName": "null_val",
+        "propertyType": "null"
+      },
+      {
+        "propertyName": "obj",
+        "propertyType": "object",
+        "children": [
+          {
+            "propertyName": "key",
+            "propertyType": "string"
+          }
+        ]
+      },
+      {
+        "propertyName": "list_str",
+        "propertyType": "list(string)",
+        "children": [
+          "string"
+        ]
+      },
+      {
+        "propertyName": "list_int",
+        "propertyType": "list(int)",
+        "children": [
+          "int"
+        ]
+      },
+      {
+        "propertyName": "list_float",
+        "propertyType": "list(float)",
+        "children": [
+          "float"
+        ]
+      },
+      {
+        "propertyName": "list_bool",
+        "propertyType": "list(boolean)",
+        "children": [
+          "boolean"
+        ]
+      }
+    ]
+  },
+  {
+    "fixture_id": "fixture-13",
+    "description": "3-level nesting: verifies recursive schema extraction to at least 3 levels",
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0"
+    },
+    "input": {
+      "a": {
+        "b": {
+          "c": 42
+        }
+      }
+    },
+    "expected": [
+      {
+        "propertyName": "a",
+        "propertyType": "object",
+        "children": [
+          {
+            "propertyName": "b",
+            "propertyType": "object",
+            "children": [
+              {
+                "propertyName": "c",
+                "propertyType": "int"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

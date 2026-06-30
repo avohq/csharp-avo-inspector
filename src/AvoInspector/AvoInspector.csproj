@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Avo.Inspector</RootNamespace>
+    <AssemblyName>AvoInspector</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Nullable BCL annotations are incomplete on netstandard2.0; do not fail the build on them. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+
+    <!-- NuGet package metadata -->
+    <PackageId>AvoInspector</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Avo</Authors>
+    <Description>Avo Inspector server-side SDK for C#/.NET. Extracts event property schemas and reports them to the Avo Inspector API. Implements avohq/spec-first-inspector-server-sdk v1.0.0.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>avo;inspector;analytics;observability;telemetry</PackageTags>
+    <PackageProjectUrl>https://github.com/avohq/csharp-avo-inspector</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/avohq/csharp-avo-inspector</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <!-- Renders the README on the nuget.org package page (packed at the package root below). -->
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- avohq/spec-first-inspector-server-sdk spec version implemented by this SDK. -->
+    <AvoInspectorSpecVersion>1.0.0</AvoInspectorSpecVersion>
+
+    <!-- Symbols + SourceLink: ship a .snupkg and embed repo/commit info so consumers can
+         step into this SDK's source while debugging. -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <!-- Reproducible package builds on CI (deterministic paths + SourceLink). -->
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <!-- Pack the repo-root README at the package root for PackageReadmeFile. -->
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <!-- SourceLink for github.com (build-time only; never a runtime dependency). -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
+  </ItemGroup>
+
+  <!-- System.Text.Json is in-box on net8.0; netstandard2.0 needs the package. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AvoInspector.Conformance" />
+    <InternalsVisibleTo Include="AvoInspector.Tests" />
+  </ItemGroup>
+
+</Project>

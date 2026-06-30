@@ -1,0 +1,64 @@
+[
+  {
+    "fixture_id": "error-1",
+    "description": "samplingRate at boundary 1.0 (default) — all events are sent, exactly 1 HTTP call made",
+    "constructor": { "apiKey": "test-key", "env": "dev", "version": "1.0.0", "appName": "TestApp" },
+    "operation": "trackSchemaFromEvent",
+    "input": {
+      "eventName": "Purchase Completed",
+      "eventProperties": { "amount": 99, "currency": "USD" },
+      "streamId": "stream-abc"
+    },
+    "precondition": { "samplingRate": 1.0 },
+    "mock_response": { "status": 200, "body": { "samplingRate": 1.0 } },
+    "expected_request_count": 1,
+    "expected_promise_outcome": "resolve",
+    "notes": "samplingRate=1.0 is the upper boundary (send all events). A random value in [0.0, 1.0) is never > 1.0, so the event MUST always be sent. This complements wire-2 which tests the samplingRate=0.0 lower boundary (drop all)."
+  },
+  {
+    "fixture_id": "error-2",
+    "description": "Non-200 HTTP response (400 Bad Request) — SDK MUST resolve, not reject",
+    "constructor": { "apiKey": "test-key", "env": "dev", "version": "1.0.0" },
+    "operation": "trackSchemaFromEvent",
+    "input": {
+      "eventName": "Form Submitted",
+      "eventProperties": { "form_id": "signup" }
+    },
+    "mock_response": { "status": 400, "body": { "error": "Bad Request" } },
+    "expected_promise_outcome": "resolve",
+    "expected_resolve_value": [],
+    "notes": "Per SPEC.md Section 7.4 and the error taxonomy (Section 7.5): non-200 HTTP responses MUST resolve (not reject). The resolved value is [] — empty eventProperties yield an empty schema. SDK MUST NOT throw or reject the promise on 4xx/5xx responses."
+  },
+  {
+    "fixture_id": "error-3",
+    "description": "Empty eventProperties — extractSchema returns [], promise resolves with []",
+    "constructor": { "apiKey": "test-key", "env": "dev", "version": "1.0.0", "appName": "TestApp" },
+    "operation": "trackSchemaFromEvent",
+    "input": {
+      "eventName": "Page Viewed",
+      "eventProperties": {}
+    },
+    "mock_response": { "status": 200, "body": { "samplingRate": 1.0 } },
+    "expected_request_body": [
+      {
+        "apiKey": "test-key",
+        "appName": "TestApp",
+        "appVersion": "1.0.0",
+        "libVersion": "<semver>",
+        "env": "dev",
+        "libPlatform": "<sdk-platform>",
+        "messageId": "<uuid-v4>",
+        "streamId": "",
+        "sessionId": "",
+        "createdAt": "<iso8601>",
+        "samplingRate": 1.0,
+        "type": "event",
+        "eventName": "Page Viewed",
+        "eventProperties": []
+      }
+    ],
+    "expected_promise_outcome": "resolve",
+    "expected_resolve_value": [],
+    "notes": "Empty eventProperties {} extracts to an empty schema []. The HTTP request is still sent with eventProperties: [] in the wire body. Promise resolves with [] (the extracted schema). Verifies that empty input does not cause an error or rejection."
+  }
+]

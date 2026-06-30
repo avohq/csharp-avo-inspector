@@ -1,0 +1,126 @@
+[
+  {
+    "fixture_id": "batch-1",
+    "description": "Size trigger + mixed-stream batch: with batchSize 3, the 3rd track flushes all 3 events as one array; a 4th event starts a fresh batch drained by flush()",
+    "constructor": { "apiKey": "test-key", "env": "staging", "version": "1.0.0", "appName": "TestApp", "batchSize": 3 },
+    "operation": "sequence",
+    "steps": [
+      { "action": "track", "eventName": "E1", "eventProperties": { "a": 1 }, "streamId": "s1" },
+      { "action": "track", "eventName": "E2", "eventProperties": { "b": 2 }, "streamId": "s2" },
+      { "action": "track", "eventName": "E3", "eventProperties": { "c": 3 }, "streamId": "s1" },
+      { "action": "track", "eventName": "E4", "eventProperties": { "d": 4 }, "streamId": "s2" },
+      { "action": "flush" }
+    ],
+    "mock_response": { "status": 200, "body": { "samplingRate": 1.0 } },
+    "expected_request_count": 2,
+    "expected_request_bodies": [
+      [
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E1", "eventProperties": [ { "propertyName": "a", "propertyType": "int" } ] },
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s2", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E2", "eventProperties": [ { "propertyName": "b", "propertyType": "int" } ] },
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E3", "eventProperties": [ { "propertyName": "c", "propertyType": "int" } ] }
+      ],
+      [
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s2", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E4", "eventProperties": [ { "propertyName": "d", "propertyType": "int" } ] }
+      ]
+    ],
+    "notes": "Proves the size trigger (call 1 fires at the 3rd enqueue and carries exactly 3 events, not 4) and that a single batch MAY mix streamId (s1/s2) and eventName. Each event is self-contained. The trailing flush() drains the 4th event and awaits all in-flight sends so the captured set is deterministic (SPEC.md §12.3, §12.4)."
+  },
+  {
+    "fixture_id": "batch-2",
+    "description": "flush() force-sends a partial batch below batchSize",
+    "constructor": { "apiKey": "test-key", "env": "staging", "version": "1.0.0", "appName": "TestApp", "batchSize": 30 },
+    "operation": "sequence",
+    "steps": [
+      { "action": "track", "eventName": "E1", "eventProperties": { "a": 1 }, "streamId": "s1" },
+      { "action": "track", "eventName": "E2", "eventProperties": { "b": 2 }, "streamId": "s1" },
+      { "action": "flush" }
+    ],
+    "mock_response": { "status": 200, "body": { "samplingRate": 1.0 } },
+    "expected_request_count": 1,
+    "expected_request_bodies": [
+      [
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E1", "eventProperties": [ { "propertyName": "a", "propertyType": "int" } ] },
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E2", "eventProperties": [ { "propertyName": "b", "propertyType": "int" } ] }
+      ]
+    ],
+    "notes": "batchSize 30, so neither track reaches the size trigger; the buffer holds 2 events. flush() MUST force-send them as one batch and resolve (SPEC.md §4.6, §12.6)."
+  },
+  {
+    "fixture_id": "batch-3",
+    "description": "destroy() discards the pending batch unsent — zero HTTP calls",
+    "constructor": { "apiKey": "test-key", "env": "staging", "version": "1.0.0", "appName": "TestApp", "batchSize": 30 },
+    "operation": "sequence",
+    "steps": [
+      { "action": "track", "eventName": "E1", "eventProperties": { "a": 1 }, "streamId": "s1" },
+      { "action": "track", "eventName": "E2", "eventProperties": { "b": 2 }, "streamId": "s1" },
+      { "action": "destroy" }
+    ],
+    "mock_response": null,
+    "expected_request_count": 0,
+    "notes": "Two events are buffered (below batchSize 30), then destroy() is called. destroy() MUST discard the pending batch without sending it (SPEC.md §4.5, §12.6), so the mock records zero requests."
+  },
+  {
+    "fixture_id": "batch-4",
+    "description": "maxQueueSize overflow drops the oldest buffered event (FIFO)",
+    "constructor": { "apiKey": "test-key", "env": "staging", "version": "1.0.0", "appName": "TestApp", "batchSize": 30, "maxQueueSize": 2 },
+    "operation": "sequence",
+    "steps": [
+      { "action": "track", "eventName": "E1", "eventProperties": { "a": 1 }, "streamId": "s1" },
+      { "action": "track", "eventName": "E2", "eventProperties": { "b": 2 }, "streamId": "s2" },
+      { "action": "track", "eventName": "E3", "eventProperties": { "c": 3 }, "streamId": "s1" },
+      { "action": "flush" }
+    ],
+    "mock_response": { "status": 200, "body": { "samplingRate": 1.0 } },
+    "expected_request_count": 1,
+    "expected_request_bodies": [
+      [
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s2", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E2", "eventProperties": [ { "propertyName": "b", "propertyType": "int" } ] },
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E3", "eventProperties": [ { "propertyName": "c", "propertyType": "int" } ] }
+      ]
+    ],
+    "notes": "maxQueueSize 2 caps the buffer. Appending E3 would exceed the cap, so the oldest event E1 MUST be dropped (FIFO) and the drop logged as a count only (SPEC.md §12.5). The flushed batch therefore contains E2 and E3, not E1."
+  },
+  {
+    "fixture_id": "batch-5",
+    "description": "Non-200 response does NOT re-queue the batch (permanent rejection)",
+    "constructor": { "apiKey": "test-key", "env": "staging", "version": "1.0.0", "appName": "TestApp", "batchSize": 2 },
+    "operation": "sequence",
+    "steps": [
+      { "action": "track", "eventName": "E1", "eventProperties": { "a": 1 }, "streamId": "s1" },
+      { "action": "track", "eventName": "E2", "eventProperties": { "b": 2 }, "streamId": "s2" },
+      { "action": "track", "eventName": "E3", "eventProperties": { "c": 3 }, "streamId": "s1" },
+      { "action": "track", "eventName": "E4", "eventProperties": { "d": 4 }, "streamId": "s2" },
+      { "action": "flush" }
+    ],
+    "mock_responses": [
+      { "status": 500, "body": {} },
+      { "status": 200, "body": { "samplingRate": 1.0 } }
+    ],
+    "expected_request_count": 2,
+    "expected_request_bodies": [
+      [
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E1", "eventProperties": [ { "propertyName": "a", "propertyType": "int" } ] },
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s2", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E2", "eventProperties": [ { "propertyName": "b", "propertyType": "int" } ] }
+      ],
+      [
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s1", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E3", "eventProperties": [ { "propertyName": "c", "propertyType": "int" } ] },
+        { "apiKey": "test-key", "appName": "TestApp", "appVersion": "1.0.0", "libVersion": "<semver>", "env": "staging", "libPlatform": "<sdk-platform>", "messageId": "<uuid-v4>", "streamId": "s2", "sessionId": "", "createdAt": "<iso8601>", "samplingRate": 1.0, "type": "event", "eventName": "E4", "eventProperties": [ { "propertyName": "d", "propertyType": "int" } ] }
+      ]
+    ],
+    "notes": "batchSize 2: E1+E2 trigger the first send (mock returns 500), E3+E4 trigger the second (mock returns 200). A non-200 MUST NOT re-queue (SPEC.md §12.5), so the second batch is [E3, E4] — NOT [E1, E2, E3, E4]. Uses mock_responses for per-call status. flush() awaits both in-flight sends."
+  },
+  {
+    "fixture_id": "batch-6",
+    "description": "Concurrent enqueue + flush atomic swap-and-clear: K concurrent tracks then a flush yield exactly K distinct events across all batches — no lost, duplicated, or torn events.",
+    "constructor": { "apiKey": "test-key", "env": "staging", "version": "1.0.0", "appName": "TestApp", "batchSize": 10 },
+    "operation": "sequence",
+    "steps": [
+      { "action": "trackN", "count": 200, "eventNamePrefix": "C", "streamId": "s1" },
+      { "action": "flush" }
+    ],
+    "mock_response": { "status": 200, "body": { "samplingRate": 1.0 } },
+    "expected_event_union_count": 200,
+    "expected_unique_message_ids": true,
+    "notes": "MUST-level: concurrency atomicity is a MUST in SPEC.md §3.1 and §12.4. trackN fires count=200 concurrent trackSchemaFromEvent calls (real threads/goroutines/parallel tasks where the runtime supports it; concurrently-scheduled awaited tasks otherwise), each enqueuing one distinct event named C0..C199 with empty eventProperties. With batchSize 10, size-triggered sends fire during the concurrent enqueue; the trailing flush() drains the remainder and awaits all in-flight sends. The runner asserts over the order-independent UNION of all captured batch bodies: exactly 200 events total (expected_event_union_count) and all 200 messageIds present and unique (expected_unique_message_ids). This pass condition is interleaving-invariant — a correct atomic swap-and-clear always yields exactly the K events once each; the only way to fail is a genuinely lost, duplicated, or torn event. (Single-threaded async runtimes exercise concurrent scheduling but not true parallelism; that residual stays in conformance/README.md.)"
+  }
+]

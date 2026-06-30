@@ -1,0 +1,52 @@
+name: Publish to NuGet
+
+# One-tag-to-publish: push a tag like `v1.0.1` (after bumping both
+# <Version> in AvoInspector.csproj AND InspectorVersion.LibVersion to 1.0.1)
+# and this packs + pushes AvoInspector to nuget.org.
+#
+# Requires a repo secret NUGET_API_KEY (nuget.org → Account → API Keys).
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Verify tag matches <Version> (and thus the wire libVersion)
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VER="$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/AvoInspector/AvoInspector.csproj | head -1)"
+          echo "tag=$TAG  csproj <Version>=$VER"
+          if [ "$TAG" != "$VER" ]; then
+            echo "::error::Tag v$TAG != <Version> $VER. Bump <Version> AND InspectorVersion.LibVersion to $TAG, then re-tag."
+            exit 1
+          fi
+
+      - name: Restore
+        run: dotnet restore AvoInspector.sln
+
+      - name: Test (gate the release)
+        run: dotnet test tests/AvoInspector.Tests/AvoInspector.Tests.csproj -c Release
+
+      - name: Pack (deterministic; produces .nupkg + .snupkg)
+        run: dotnet pack src/AvoInspector/AvoInspector.csproj -c Release -o artifacts
+
+      - name: Push package + symbols to nuget.org
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: >-
+          dotnet nuget push "artifacts/*.nupkg"
+          --api-key "$NUGET_API_KEY"
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
