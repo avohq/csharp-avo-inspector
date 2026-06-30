@@ -4,9 +4,6 @@ name: Publish to NuGet
 # <Version> in AvoInspector.csproj AND InspectorVersion.LibVersion to 1.0.1)
 # and this packs + pushes AvoInspector to nuget.org.
 #
-# Uses NuGet trusted publishing (OIDC) — no long-lived API key secret needed.
-# Prereq: configure a Trusted Publisher policy on nuget.org pointing at this
-# repo + workflow file before pushing the first tag.
 
 on:
   push:
