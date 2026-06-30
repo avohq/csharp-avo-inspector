@@ -45,6 +45,8 @@ jobs:
       - name: Login to nuget.org via OIDC
         uses: NuGet/login@v1
         id: nuget-login
+        with:
+          user: avo.cado
 
       - name: Push package + symbols to nuget.org
         run: >-
