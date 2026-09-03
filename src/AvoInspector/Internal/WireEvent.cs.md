@@ -16,7 +16,8 @@ Internal C# class in namespace `Avo.Inspector.Internal`. Serialized with `System
 
 - `string ApiKey` → `apiKey`
 - `string AppName` → `appName`
-- `string AppVersion` → `appVersion`
+- `string? AppVersion` → `appVersion` — **nullable, no `[JsonIgnore]`: always serialized, even when
+  `null`** (the one field on the wire that may legitimately be a literal JSON `null`; see below)
 - `string LibVersion` → `libVersion`
 - `string Env` → `env`
 - `string LibPlatform` → `libPlatform`
@@ -28,8 +29,14 @@ Internal C# class in namespace `Avo.Inspector.Internal`. Serialized with `System
 - `string Type` → `type` (defaults to `"event"`)
 - `string EventName` → `eventName`
 - `IReadOnlyList<SchemaEntry> EventProperties` → `eventProperties` (defaults to empty list)
+- `string? OutputReference` → `outputReference` — nullable, `[JsonIgnore(Condition =
+  JsonIgnoreCondition.WhenWritingNull)]`: omitted from the wire entirely when `null`, never sent as
+  `null`
+- `string? OriginHint` → `originHint` — same nullable/`[JsonIgnore(WhenWritingNull)]` shape as
+  `OutputReference`
 
-All string fields default to `string.Empty`.
+Non-nullable string fields default to `string.Empty`. `AppVersion`/`OutputReference`/`OriginHint`
+default to `null` (no initializer).
 
 ## Functional requirements
 
@@ -42,3 +49,5 @@ All string fields default to `string.Empty`.
 **IMPORTANT: the type intentionally has no `trackingId`, `visitorId`, or `userId` field**, so they are never serialized. These are not required by the backend.
 
 There is no `eventId`, `eventHash`, or `avoFunction` field either.
+
+**IMPORTANT: `outputReference`/`originHint` are an Avo-contract extension (AVO-3516/AVO-3543), not part of `avohq/spec-first-inspector-server-sdk` v1.0.0** — the same kind of deliberate divergence as the `sessionId` note above, for gateway-scoped API keys (see `TrackOptions`). They are placed after `EventProperties` and each individually carries `[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]`, never a global `DefaultIgnoreCondition`, because a global setting would also suppress `appVersion: null` — the one field this SDK legitimately sends as a literal wire `null`.

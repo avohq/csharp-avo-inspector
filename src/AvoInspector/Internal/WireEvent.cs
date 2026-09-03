@@ -17,12 +17,18 @@ namespace Avo.Inspector.Internal
     /// for ingestion; <c>trackingId</c>/<c>eventId</c>/<c>eventHash</c>/<c>avoFunction</c> are not.
     /// We therefore emit <c>sessionId: ""</c> and continue to omit <c>trackingId</c>/<c>visitorId</c>/
     /// <c>userId</c> (which are not required).</para>
+    /// <para><b>Gateway extension (AVO-3516 / AVO-3543), not part of
+    /// <c>avohq/spec-first-inspector-server-sdk</c> v1.0.0.</b> <see cref="OutputReference"/> and
+    /// <see cref="OriginHint"/> are Avo-contract additions for gateway-scoped API keys (see
+    /// <see cref="TrackOptions"/>). <see cref="AppVersion"/> is therefore also nullable — with
+    /// <c>originHint</c> set and no usable per-event app version, <c>appVersion</c> is sent as a
+    /// literal JSON <c>null</c> rather than falling back to the instance's configured version.</para>
     /// </remarks>
     internal sealed class WireEvent
     {
         [JsonPropertyName("apiKey")] public string ApiKey { get; set; } = string.Empty;
         [JsonPropertyName("appName")] public string AppName { get; set; } = string.Empty;
-        [JsonPropertyName("appVersion")] public string AppVersion { get; set; } = string.Empty;
+        [JsonPropertyName("appVersion")] public string? AppVersion { get; set; }
         [JsonPropertyName("libVersion")] public string LibVersion { get; set; } = string.Empty;
         [JsonPropertyName("env")] public string Env { get; set; } = string.Empty;
         [JsonPropertyName("libPlatform")] public string LibPlatform { get; set; } = string.Empty;
@@ -36,5 +42,16 @@ namespace Avo.Inspector.Internal
         [JsonPropertyName("eventName")] public string EventName { get; set; } = string.Empty;
         [JsonPropertyName("eventProperties")] public IReadOnlyList<SchemaEntry> EventProperties { get; set; }
             = new List<SchemaEntry>();
+
+        // Gateway extension (AVO-3516 / AVO-3543, see class remarks). Individually
+        // JsonIgnore'd rather than a global DefaultIgnoreCondition, so appVersion: null above
+        // remains serialized.
+        [JsonPropertyName("outputReference")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? OutputReference { get; set; }
+
+        [JsonPropertyName("originHint")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? OriginHint { get; set; }
     }
 }

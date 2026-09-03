@@ -1,6 +1,7 @@
 ---
 import:
 src/AvoInspector/AvoInspectorOptions.cs.md
+src/AvoInspector/TrackOptions.cs.md
 src/AvoInspector/AvoInspectorEnv.cs.md
 src/AvoInspector/AvoSchemaParser.cs.md
 src/AvoInspector/SchemaEntry.cs.md
@@ -36,6 +37,13 @@ the `_flushTimer`, and a `CancellationTokenSource`.
 
 `_shouldLog` is a **process-wide `static volatile bool`** (SPEC.md §4.4) — shared by every instance
 in the process, not per-instance.
+
+`_originHintWithoutAppVersionWarned` is also a **process-wide `static volatile bool`**, for the
+identical scoping reason as `_shouldLog`: a per-instance field would still allow unbounded stderr
+volume from a caller that constructs many short-lived `AvoInspector` instances. It is the one-shot
+latch for the gateway `originHint`-without-`AppVersion` warning (AVO-3543, see "Wire event
+construction" below) — default `false`, set to `true` only on the branch that actually writes the
+warning, and never reset.
 
 Constants: production endpoint `https://api.avo.app/inspector/v1/track`; mock-endpoint env var name
 `AVO_INSPECTOR_MOCK_ENDPOINT`; default flush timeout `10_000` ms.
@@ -99,11 +107,19 @@ an empty list for a null map or on any internal parser error (logging the error 
 
 ```csharp
 public Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(
-    string eventName, IDictionary<string, object?>? eventProperties, string? streamId = null)
+    string eventName, IDictionary<string, object?>? eventProperties, string? streamId = null,
+    TrackOptions? options = null)
 ```
 
 Pipeline: extract schema → resolve stream id → apply per-event sampling → enqueue into the pending
 batch → dispatch a send when a flush trigger fires.
+
+- **`options` (`TrackOptions`, AVO-3516/AVO-3543 — gateway extension, not part of
+  `avohq/spec-first-inspector-server-sdk` v1.0.0):** trailing optional parameter, default `null`, so
+  every existing three-argument call site keeps compiling and behaving identically. Threaded
+  unchanged into `BuildWireEvent`; its properties are only inspected there (see "Wire event
+  construction" below), and not at all if the event is sampled out first. No lock is taken for it —
+  per-call, immutable input.
 
 - **Post-`Destroy` no-op:** resolves with an empty list, no enqueue, no HTTP call. Re-checked again
   under the lock right before enqueue to handle a mid-flight `Destroy`.
@@ -133,7 +149,35 @@ Each event becomes a `WireEvent` carrying: `apiKey`, `appName`, `appVersion`,
 `libVersion`/`libPlatform` (from `InspectorVersion`), `env` wire string, a fresh lowercase UUID v4
 `messageId`, `streamId`, a UTC `createdAt` formatted `yyyy-MM-dd'T'HH:mm:ss.fff'Z'` (invariant
 culture), the sampling-rate snapshot, `type = "event"`, the event name (null → `""`), and the
-extracted schema as `eventProperties`.
+extracted schema as `eventProperties` — plus, since this SDK's 1.1.0, the gateway extension fields
+below (AVO-3516/AVO-3543).
+
+**Gateway extension fields.** `options?.OutputReference`, `options?.OriginHint`, and
+`options?.AppVersion` are each normalized by `NormalizeHint(string?)` — same shape as
+`ResolveStreamId`, but trims and returns `null` (omit the wire key) for `null`/`""`/whitespace-only
+instead of `""`, and never logs. `outputReference`/`originHint` are set on the `WireEvent` as-is
+(omitted on the wire when `null`, via `WireEvent`'s per-property `[JsonIgnore]`). `appVersion`
+resolves per this decision table (the one place this rule is stated):
+
+| `OriginHint` (normalized) | `AppVersion` (normalized) | wire `appVersion` |
+|---|---|---|
+| set | set (non-blank) | `AppVersion`, trimmed |
+| set | absent/blank | literal JSON `null` |
+| absent | set (non-blank) | `AppVersion`, trimmed |
+| absent | absent/blank | the instance's constructed `appVersion` (unchanged 1.0.0 behavior) |
+
+With `options == null` or an empty `new TrackOptions()`, every field above normalizes to `null` and
+the wire body is byte-for-byte identical to 1.0.0 (no `outputReference`/`originHint` keys,
+`appVersion` = the constructor value).
+
+**One-shot gated warning.** When `originHint != null && resolvedAppVersion == null` (decision-table
+row 2 — the current v1 backend silently drops this event, AVO-3543) and `_shouldLog` is `true` and
+`_originHintWithoutAppVersionWarned` is still `false`, `BuildWireEvent` calls `Logger.Error` with a
+fixed message string (never the field values) and sets the latch. The latch caps this at one
+`stderr` line for the life of the process — this trigger condition, unlike the file's other
+`Logger.Error` call sites, can otherwise hold on every call of a healthy, spec-compliant gateway
+integration. The check-then-set is deliberately unsynchronized (no `_lock`); a benign race can log
+1–2 lines instead of exactly 1, never zero, never unbounded.
 
 ### Flush
 

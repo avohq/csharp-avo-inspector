@@ -37,6 +37,12 @@ namespace Avo.Inspector
         // to reads on all instances across threads.
         private static volatile bool _shouldLog;
 
+        // One-shot, process-wide latch for the originHint-without-usable-AppVersion warning
+        // (AVO-3543). Static/volatile for the same reason as _shouldLog: a per-instance field would
+        // still allow unbounded stderr volume from a caller constructing many short-lived instances.
+        // Set to true only on the branch that actually writes the warning; never reset.
+        private static volatile bool _originHintWithoutAppVersionWarned;
+
         private readonly object _lock = new object();
 
         // Constructor options — fixed at construction (SPEC.md §5). Treated as immutable after init.
@@ -238,10 +244,13 @@ namespace Avo.Inspector
         /// <param name="eventName">The tracked event name.</param>
         /// <param name="eventProperties">The event properties to extract a schema from.</param>
         /// <param name="streamId">Optional stream id; passed through verbatim (SPEC.md §4.2, §8.2).</param>
+        /// <param name="options">Optional gateway coordinates and per-event app version override
+        /// (<see cref="TrackOptions"/>); <c>null</c> sends a body identical to 1.0.0.</param>
         public async Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(
             string eventName,
             IDictionary<string, object?>? eventProperties,
-            string? streamId = null)
+            string? streamId = null,
+            TrackOptions? options = null)
         {
             // SPEC.md §4.5 — after destroy(), resolve([]) with no enqueue and no HTTP call.
             lock (_lock)
@@ -270,7 +279,7 @@ namespace Avo.Inspector
                     return eventSchema;
                 }
 
-                var body = BuildWireEvent(eventName, resolvedStreamId, samplingSnapshot, eventSchema);
+                var body = BuildWireEvent(eventName, resolvedStreamId, samplingSnapshot, eventSchema, options);
 
                 List<WireEvent>? batchToSend = null;
                 var dropped = 0;
@@ -422,17 +431,56 @@ namespace Avo.Inspector
             return string.Empty;
         }
 
+        // Same shape as ResolveStreamId, but returns null (omit the wire key) instead of "" and
+        // never logs — used for the gateway-extension hint/version fields (AVO-3516/AVO-3543).
+        private static string? NormalizeHint(string? value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return null;
+            }
+            var trimmed = value!.Trim();
+            return trimmed.Length == 0 ? null : trimmed;
+        }
+
         private WireEvent BuildWireEvent(
             string eventName,
             string streamId,
             double samplingSnapshot,
-            IReadOnlyList<SchemaEntry> eventSchema)
+            IReadOnlyList<SchemaEntry> eventSchema,
+            TrackOptions? options)
         {
+            var outputReference = NormalizeHint(options?.OutputReference);
+            var originHint = NormalizeHint(options?.OriginHint);
+            var normalizedAppVersion = NormalizeHint(options?.AppVersion);
+
+            // App version resolution — see the decision table in TrackOptions.AppVersion's XML doc
+            // and the spec's Proposed Design.
+            var resolvedAppVersion = originHint != null
+                ? normalizedAppVersion                 // source-scoped: instance version never applies
+                : normalizedAppVersion ?? _appVersion;  // unscoped: override when provided, else fall back
+
+            if (originHint != null && resolvedAppVersion == null &&
+                _shouldLog && !_originHintWithoutAppVersionWarned)
+            {
+                // The current v1 backend silently drops this event (AVO-3543). Gated on the same
+                // process-wide _shouldLog flag every other Logger.Error call in this file already
+                // uses, AND capped at one line for the life of the process via the latch below —
+                // unlike ResolveStreamId's ':' warning, this condition can hold on every call of a
+                // healthy, spec-compliant gateway integration. The latch is set only on this branch
+                // (the one that actually writes), so enabling logging later still yields one signal.
+                // Fixed message string only: never logs OutputReference/OriginHint/AppVersion values.
+                _originHintWithoutAppVersionWarned = true;
+                Logger.Error(_shouldLog, "originHint set without a usable AppVersion; this event's " +
+                    "appVersion will be sent as null, which the current v1 backend silently drops " +
+                    "(AVO-3543).");
+            }
+
             return new WireEvent
             {
                 ApiKey = _apiKey,
                 AppName = _appName,
-                AppVersion = _appVersion,
+                AppVersion = resolvedAppVersion,
                 LibVersion = InspectorVersion.LibVersion,
                 Env = _envWire,
                 LibPlatform = InspectorVersion.LibPlatform,
@@ -442,7 +490,9 @@ namespace Avo.Inspector
                 SamplingRate = samplingSnapshot,
                 Type = "event",
                 EventName = eventName ?? string.Empty,
-                EventProperties = eventSchema
+                EventProperties = eventSchema,
+                OutputReference = outputReference,
+                OriginHint = originHint
             };
         }
 
