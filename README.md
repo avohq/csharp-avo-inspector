@@ -99,6 +99,76 @@ For `--live`, set `AVO_INSPECTOR_API_KEY` (and optionally `AVO_INSPECTOR_ENV=dev
 
 ---
 
+## Gateways
+
+Avo Inspector is moving to a multi-gate model: one Inspector API key per *gateway* (a
+server-side proxy or event bus checkpoint) rather than one Inspector source per
+individual destination. `TrackSchemaFromEvent` accepts an optional trailing
+`TrackOptions? options = null` parameter that lets a gateway-scoped key tell
+observations taken at different checkpoints, and from different upstream sources, apart.
+
+```csharp
+using Avo.Inspector;
+
+await inspector.TrackSchemaFromEvent(
+    eventName: "Purchase Completed",
+    eventProperties: new Dictionary<string, object?> { ["amount"] = 99.0 },
+    streamId: "web",
+    options: new TrackOptions
+    {
+        OutputReference = "meta-x7k2q", // which output checkpoint this observation was bound for
+        OriginHint      = "web",        // which upstream source produced the event
+    });
+```
+
+`TrackOptions` has three `string?` properties, all optional and independent — set any
+combination:
+
+| Property | Purpose |
+|---|---|
+| `OutputReference` | Which gateway output (destination checkpoint) this observation was bound for. Leave `null` for a gateway-level observation not tied to one output. |
+| `OriginHint` | Identifies the event's upstream source (e.g. `"web"`, `"ios"`, `"android"`). See "Origin hint" below. |
+| `AppVersion` | Per-event app version override — see "Origin hint" below for how it interacts with `OriginHint`. |
+
+All three values are trimmed before sending; empty or whitespace-only values are treated
+as absent, and `OutputReference`/`OriginHint` are then omitted from the wire body
+entirely rather than sent as `null` or `""`. Passing `options: null` — including every
+existing three-argument call site — or an empty `new TrackOptions()` produces a wire
+body byte-for-byte identical to before this feature; this is fully backward-compatible.
+
+> A customer's own event property literally named `outputReference` or `originHint`
+> (with unrelated business meaning) is unaffected. It still appears inside
+> `eventProperties` exactly as before — the top-level `outputReference`/`originHint`
+> fields described here come only from `TrackOptions`, never from event data, and
+> neither direction leaks into the other.
+
+### Origin hint
+
+`OriginHint` must be a **low-cardinality** value (e.g. `"web"`, `"ios"`, `"android"`) —
+it **MUST NOT** be a user identifier or any other high-cardinality value. This is a
+documentation-only rule; the SDK does not validate it at runtime.
+
+Setting `OriginHint` marks the event as coming from a different source than the app this
+`AvoInspector` instance was constructed with, which changes how `AppVersion` resolves on
+the wire:
+
+| `OriginHint` (normalized) | `AppVersion` (normalized) | wire `appVersion` |
+|---|---|---|
+| set | set (non-blank) | `AppVersion`, trimmed |
+| set | absent/blank | literal JSON `null` |
+| absent | set (non-blank) | `AppVersion`, trimmed |
+| absent | absent/blank | the constructor `Version` value (unchanged behavior) |
+
+> **Backend note:** the Inspector backend does not yet honor `outputReference` or
+> `originHint` on this SDK's endpoint (`POST /inspector/v1/track`), and does not yet
+> accept a literal `appVersion: null`. Until the backend is updated, setting
+> `OriginHint` without a non-blank `AppVersion` override causes the event to be
+> **silently dropped** — the HTTP response is still `200`, but the event never reaches
+> the Inspector dashboard. Track this at AVO-3543; a follow-up backend ticket must land
+> before `OriginHint` can be used safely without an `AppVersion` override.
+
+---
+
 ## ⚠️ Shutdown contract — you MUST flush before exit
 
 Buffered and in-flight events are held **in memory only** and are delivered
@@ -152,7 +222,7 @@ The constructor throws synchronously (an `ArgumentException`) for a missing/whit
 `ApiKey` or `Version`. An invalid or absent `env` string **never throws** — it falls
 back to `Dev` with a warning.
 
-### `Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(string eventName, IDictionary<string, object?>? eventProperties, string? streamId = null)`
+### `Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(string eventName, IDictionary<string, object?>? eventProperties, string? streamId = null, TrackOptions? options = null)`
 
 Extracts the event's schema, applies per-event sampling, enqueues it, and dispatches a
 batch when a flush trigger fires. Resolves with the extracted schema **at enqueue time**.
@@ -167,6 +237,11 @@ batch when a flush trigger fires. Resolves with the extracted schema **at enqueu
 
 `streamId` is passed through verbatim; a value containing `:` is warned about but still
 used unchanged; an absent or empty value becomes `""` on the wire.
+
+`options` carries optional per-call gateway coordinates (`OutputReference`, `OriginHint`)
+and a per-event `AppVersion` override — see "Gateways" above for the full behavior and
+the app-version resolution table. Omitting `options` (or passing an empty
+`new TrackOptions()`) produces a wire body identical to before this parameter existed.
 
 ### `IReadOnlyList<SchemaEntry> ExtractSchema(IDictionary<string, object?>? eventProperties)`
 

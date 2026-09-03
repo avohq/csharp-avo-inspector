@@ -17,7 +17,7 @@ namespace Avo.Inspector
         /// release.</b> They are two files by spec necessity; the <c>VersionTests</c> drift-guard
         /// test fails CI if they diverge.</para>
         /// </summary>
-        public const string LibVersion = "1.0.0";
+        public const string LibVersion = "1.1.0";
 
         /// <summary>
         /// Identifies the SDK platform/language on the wire as <c>libPlatform</c> (SPEC.md §7.3.1).

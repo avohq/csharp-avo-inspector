@@ -5,6 +5,40 @@ follows [Semantic Versioning](https://semver.org/). The `libVersion` sent on the
 the SDK library version (`InspectorVersion.LibVersion`), independent of the spec contract
 version it implements (`InspectorVersion.SpecVersion`).
 
+## [1.1.0] — 2026-09-03
+
+### Added
+
+- `TrackOptions` — optional per-call gateway coordinates (`OutputReference`, `OriginHint`)
+  and a per-event `AppVersion` override for `TrackSchemaFromEvent`, via a new trailing
+  optional `TrackOptions? options = null` parameter. Fully backward-compatible: existing
+  three-argument call sites compile and behave identically, and the wire body is
+  byte-for-byte identical to 1.0.0 when `options` is `null` or an empty `TrackOptions`.
+- Wire body gains `outputReference` / `originHint` as top-level siblings of
+  `eventProperties` (each omitted, never sent as `null` or `""`, when empty/null/
+  whitespace-only after trimming); `appVersion` becomes nullable on the wire (still
+  always present as a key — the one field in this feature that may legitimately be a
+  literal JSON `null`, per the app-version resolution table in the README's "Gateways"
+  section).
+- `OriginHint` must be a low-cardinality value (e.g. `"web"`, `"ios"`, `"android"`) — it
+  MUST NOT be a user identifier or other high-cardinality value. Documentation-only; not
+  validated at runtime.
+- **Backend note:** the Inspector backend does not yet honor `outputReference` or
+  `originHint` on this SDK's endpoint (`POST /inspector/v1/track`), and does not yet
+  accept a literal `appVersion: null`. Until the backend is updated, setting
+  `OriginHint` without a non-blank `AppVersion` override causes the event to be
+  **silently dropped** — the HTTP response is still `200`, but the event never reaches
+  the Inspector dashboard. Track this at AVO-3543; a follow-up backend ticket must land
+  before `OriginHint` can be used safely without an `AppVersion` override.
+
+### Changed
+
+- `AvoInspector.Tests` and `AvoInspector.Conformance` now build against
+  `src/AvoInspector/AvoInspector.csproj` via `ProjectReference` instead of the published
+  `AvoInspector` NuGet package, so CI and `./scripts/run-conformance.sh` exercise this
+  repo's unreleased source rather than a pinned prior release. `examples/AvoInspector.Example`
+  is unaffected and stays on the published `1.0.0` package for this release.
+
 ## [1.0.0] — 2026-06-25
 
 Initial release. Implements `avohq/spec-first-inspector-server-sdk` **v1.0.0**.
@@ -35,4 +69,5 @@ Initial release. Implements `avohq/spec-first-inspector-server-sdk` **v1.0.0**.
   destroy post-state, scheduled flush, transient-failure no-requeue, gzip).
 - Multi-targets `netstandard2.0` and `net8.0`.
 
+[1.1.0]: https://github.com/avohq/csharp-avo-inspector/releases/tag/v1.1.0
 [1.0.0]: https://github.com/avohq/csharp-avo-inspector/releases/tag/v1.0.0

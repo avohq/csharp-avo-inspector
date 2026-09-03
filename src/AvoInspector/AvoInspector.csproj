@@ -13,7 +13,7 @@
 
     <!-- NuGet package metadata -->
     <PackageId>AvoInspector</PackageId>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Authors>Avo</Authors>
     <Description>Avo Inspector server-side SDK for C#/.NET. Extracts event property schemas and reports them to the Avo Inspector API. Implements avohq/spec-first-inspector-server-sdk v1.0.0.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
