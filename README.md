@@ -118,8 +118,15 @@ await inspector.TrackSchemaFromEvent(
     {
         OutputReference = "meta-x7k2q", // which output checkpoint this observation was bound for
         OriginHint      = "web",        // which upstream source produced the event
+        AppVersion      = "5.1.0",      // that source's app version — keep this set whenever
+                                        // OriginHint is set (see "Backend note" below)
     });
 ```
+
+> Until the backend change tracked in AVO-3543 ships, always pair `OriginHint` with a non-blank
+> `AppVersion` as above. `OriginHint` without `AppVersion` is a valid call per the contract, but
+> the current `/inspector/v1/track` endpoint silently drops that event — see the **Backend note**
+> further down.
 
 `TrackOptions` has three `string?` properties, all optional and independent — set any
 combination:
@@ -333,6 +340,12 @@ a `Prod` instance ignores it unconditionally, so production traffic can never be
 > [avohq/spec-first-inspector-server-sdk#2](https://github.com/avohq/spec-first-inspector-server-sdk/pull/2)
 > (`sessionId` becomes a required wire field, empty string for server SDKs); this SDK already
 > implements that. `trackingId`/`visitorId`/`userId` remain absent.
+
+> **Gateway fields.** Since 1.1.0 an event may also carry two optional top-level siblings of
+> `eventProperties` — `outputReference` and `originHint` — and `appVersion` may be a literal JSON
+> `null` when `originHint` is set without a per-event app version. Both are omitted entirely when
+> not provided, so a call without `TrackOptions` produces the 1.0.0 body unchanged. See
+> [Gateways](#gateways).
 
 ---
 
