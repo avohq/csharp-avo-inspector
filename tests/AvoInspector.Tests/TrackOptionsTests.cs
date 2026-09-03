@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 using Avo.Inspector.Conformance;
@@ -20,7 +21,7 @@ namespace Avo.Inspector.Tests
     /// Every instance in this file is constructed with env <c>"staging"</c> (never <c>"dev"</c>,
     /// and <c>EnableLogging(true)</c> is never called), matching the standard wire-body recipe in
     /// the spec's "Existing Patterns to Follow." This keeps <c>_shouldLog == false</c> for every
-    /// test here, so none of them can set the process-wide, never-reset
+    /// test here, so none of them can set the process-wide (re-armed only via the internal test hook)
     /// <c>_originHintWithoutAppVersionWarned</c> one-shot latch — even the rows below that satisfy
     /// the warning's trigger condition (an <c>OriginHint</c> set without a usable
     /// <c>AppVersion</c>) merely resolve a JSON <c>null</c> <c>appVersion</c> without evaluating
@@ -204,6 +205,8 @@ namespace Avo.Inspector.Tests
         [InlineData(null, "5.1.0", "value", "5.1.0")]     // decision table row 3: originHint absent, appVersion set
         [InlineData(null, null, "constructor", null)]     // decision table row 4: both absent
         [InlineData("web", "   ", "null", null)]          // originHint set, appVersion whitespace-only -> null
+        [InlineData(null, "   ", "constructor", null)]    // originHint absent, appVersion whitespace-only -> constructor fallback
+        [InlineData(null, " 5.1.0 ", "value", "5.1.0")]   // originHint absent, padded appVersion -> trimmed override
         public async Task AppVersion_rule_matrix(
             string? originHint, string? appVersion, string expectedKind, string? expectedValue)
         {
@@ -525,6 +528,11 @@ namespace Avo.Inspector.Tests
             }
         }
 
+        /// <summary>The exact fixed string BuildWireEvent logs (AvoInspector.cs); never contains option values.</summary>
+        private const string OriginHintWarningText =
+            "originHint set without a usable AppVersion; this event's appVersion will be sent " +
+            "as null, which the current v1 backend silently drops (AVO-3543).";
+
         private static int CountOccurrences(string haystack, string needle)
         {
             var count = 0;
@@ -540,7 +548,8 @@ namespace Avo.Inspector.Tests
         /// <summary>
         /// Covers the gated, one-shot <c>Logger.Error</c> warning added in <c>BuildWireEvent</c>
         /// for decision-table row 2 (<c>OriginHint</c> set, resolved <c>appVersion</c> null), and
-        /// its process-wide, never-reset <c>_originHintWithoutAppVersionWarned</c> latch. This is
+        /// its process-wide <c>_originHintWithoutAppVersionWarned</c> latch (re-armed only via the
+        /// internal <c>ResetOriginHintWarningLatchForTesting</c> hook). This is
         /// the ONLY test in the whole feature's matrix allowed to construct a <c>dev</c> instance
         /// or leave logging enabled — every other test in <c>TrackOptionsTests.cs</c> uses
         /// <c>staging</c> specifically so it cannot consume this latch out of order (see this
@@ -553,9 +562,10 @@ namespace Avo.Inspector.Tests
         [Fact]
         public async Task OriginHint_without_usable_AppVersion_logs_gated_warning_once_matching_shouldLog_flag()
         {
-            const string WarningText =
-                "originHint set without a usable AppVersion; this event's appVersion will be sent " +
-                "as null, which the current v1 backend silently drops (AVO-3543).";
+            const string WarningText = OriginHintWarningText;
+
+            // Re-arm the process-wide latch so this test does not depend on execution order.
+            AvoInspector.ResetOriginHintWarningLatchForTesting();
 
             using var server = new TestInspectorServer();
             using (new MockEndpointScope(server.BaseUrl))
@@ -621,13 +631,57 @@ namespace Avo.Inspector.Tests
 
                 Assert.Equal(1, CountOccurrences(console.Output, WarningText));
 
-                // The latch is never reset, but _shouldLog is process-wide and mutable — restore
+                // The latch is only re-armed by the test hook, but _shouldLog is process-wide and mutable — restore
                 // it to the suite's default (off) so no later test observes logging left enabled.
                 dev.EnableLogging(false);
                 Assert.False(AvoInspector.ShouldLogForTesting);
 
                 dev.Destroy();
                 staging.Destroy();
+            }
+        }
+
+        /// <summary>
+        /// The latch claim is an atomic Interlocked.CompareExchange, so N callers that all evaluate
+        /// the trigger condition at the same instant still produce exactly one warning line. A plain
+        /// volatile check-then-set could let several of them win (CodeRabbit review on PR #3).
+        /// </summary>
+        [Fact]
+        public async Task OriginHint_warning_latch_is_claimed_exactly_once_under_concurrent_triggering_calls()
+        {
+            AvoInspector.ResetOriginHintWarningLatchForTesting();
+
+            using var server = new TestInspectorServer();
+            using (new MockEndpointScope(server.BaseUrl))
+            using (var console = new ConsoleErrorScope())
+            {
+                // staging (logging off by construction) with the gate explicitly opened; a large
+                // batch size + no timer so the concurrent calls only buffer and never reach HTTP.
+                var inspector = new AvoInspector("k", "staging", "1.0.0",
+                    batchSize: 1000, disableBatchTimer: true);
+                inspector.EnableLogging(true);
+                try
+                {
+                    const int callers = 16;
+                    using var gate = new Barrier(callers);
+                    var options = new TrackOptions { OutputReference = "meta-x7k2q", OriginHint = "web" };
+
+                    var calls = Enumerable.Range(0, callers).Select(_ => Task.Run(async () =>
+                    {
+                        gate.SignalAndWait(); // release all callers into BuildWireEvent together
+                        await inspector.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1", options);
+                    })).ToArray();
+                    await Task.WhenAll(calls);
+
+                    Assert.Equal(1, CountOccurrences(console.Output, OriginHintWarningText));
+                    Assert.DoesNotContain("meta-x7k2q", console.Output);
+                    Assert.Equal(callers, inspector.PendingBatchCount); // every call still enqueued
+                }
+                finally
+                {
+                    inspector.EnableLogging(false);
+                    inspector.Destroy();
+                }
             }
         }
 

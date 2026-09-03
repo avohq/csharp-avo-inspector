@@ -10,10 +10,13 @@ version it implements (`InspectorVersion.SpecVersion`).
 ### Added
 
 - `TrackOptions` — optional per-call gateway coordinates (`OutputReference`, `OriginHint`)
-  and a per-event `AppVersion` override for `TrackSchemaFromEvent`, via a new trailing
-  optional `TrackOptions? options = null` parameter. Fully backward-compatible: existing
-  three-argument call sites compile and behave identically, and the wire body is
-  byte-for-byte identical to 1.0.0 when `options` is `null` or an empty `TrackOptions`.
+  and a per-event `AppVersion` override, via a new four-parameter overload
+  `TrackSchemaFromEvent(eventName, eventProperties, streamId, options)`. Backward-compatible
+  at both source and binary level: the original three-parameter overload is retained with
+  its 1.0.0 signature and delegates with `options: null`, so existing call sites and
+  precompiled consumers keep working unchanged. With `options` `null` or an empty
+  `TrackOptions`, the wire body carries exactly the 1.0.0 key set and values — the only
+  difference from a 1.0.0 body is `libVersion`.
 - Wire body gains `outputReference` / `originHint` as top-level siblings of
   `eventProperties` (each omitted, never sent as `null` or `""`, when empty/null/
   whitespace-only after trimming); `appVersion` becomes nullable on the wire (still

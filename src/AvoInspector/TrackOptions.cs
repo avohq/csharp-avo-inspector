@@ -1,7 +1,7 @@
 namespace Avo.Inspector
 {
     /// <summary>
-    /// Optional per-call gateway coordinates for <see cref="AvoInspector.TrackSchemaFromEvent"/>
+    /// Optional per-call gateway coordinates for <see cref="AvoInspector.TrackSchemaFromEvent(string, System.Collections.Generic.IDictionary{string, object}, string, TrackOptions)"/>
     /// (AVO-3516). Used when this SDK's Inspector API key is a <b>gateway</b> key shared across
     /// destinations, to label where an observation was taken.
     /// </summary>
@@ -13,7 +13,7 @@ namespace Avo.Inspector
     /// </para>
     /// <para>
     /// <b>Thread safety:</b> treat an instance as immutable once passed to
-    /// <see cref="AvoInspector.TrackSchemaFromEvent"/>. Its three properties are read once, by
+    /// <see cref="AvoInspector.TrackSchemaFromEvent(string, System.Collections.Generic.IDictionary{string, object}, string, TrackOptions)"/>. Its three properties are read once, by
     /// value, the first time <c>options</c> is inspected within that call - inside
     /// <c>BuildWireEvent</c>, after schema extraction, stream-id resolution, and the sampling
     /// check, and not at all if the event is sampled out before <c>BuildWireEvent</c> runs.

@@ -104,7 +104,7 @@ For `--live`, set `AVO_INSPECTOR_API_KEY` (and optionally `AVO_INSPECTOR_ENV=dev
 Avo Inspector is moving to a multi-gate model: one Inspector API key per *gateway* (a
 server-side proxy or event bus checkpoint) rather than one Inspector source per
 individual destination. `TrackSchemaFromEvent` accepts an optional trailing
-`TrackOptions? options = null` parameter that lets a gateway-scoped key tell
+four-parameter overload with a trailing `TrackOptions? options` argument that lets a gateway-scoped key tell
 observations taken at different checkpoints, and from different upstream sources, apart.
 
 ```csharp
@@ -139,9 +139,12 @@ combination:
 
 All three values are trimmed before sending; empty or whitespace-only values are treated
 as absent, and `OutputReference`/`OriginHint` are then omitted from the wire body
-entirely rather than sent as `null` or `""`. Passing `options: null` — including every
-existing three-argument call site — or an empty `new TrackOptions()` produces a wire
-body byte-for-byte identical to before this feature; this is fully backward-compatible.
+entirely rather than sent as `null` or `""`. The original three-parameter overload is
+retained unchanged (source- and binary-compatible with 1.0.0) and delegates with
+`options: null`; that call, or an empty `new TrackOptions()`, produces a wire body with
+exactly the 1.0.0 key set and values — only `libVersion` differs. In the four-parameter
+overload both `streamId` and `options` are required, so pass `streamId: null` when you
+have no stream id; this keeps two- and three-argument calls binding unambiguously.
 
 > A customer's own event property literally named `outputReference` or `originHint`
 > (with unrelated business meaning) is unaffected. It still appears inside
@@ -229,7 +232,8 @@ The constructor throws synchronously (an `ArgumentException`) for a missing/whit
 `ApiKey` or `Version`. An invalid or absent `env` string **never throws** — it falls
 back to `Dev` with a warning.
 
-### `Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(string eventName, IDictionary<string, object?>? eventProperties, string? streamId = null, TrackOptions? options = null)`
+### `Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(string eventName, IDictionary<string, object?>? eventProperties, string? streamId = null)`
+### `Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(string eventName, IDictionary<string, object?>? eventProperties, string? streamId, TrackOptions? options)`
 
 Extracts the event's schema, applies per-event sampling, enqueues it, and dispatches a
 batch when a flush trigger fires. Resolves with the extracted schema **at enqueue time**.

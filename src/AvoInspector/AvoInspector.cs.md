@@ -38,12 +38,13 @@ the `_flushTimer`, and a `CancellationTokenSource`.
 `_shouldLog` is a **process-wide `static volatile bool`** (SPEC.md §4.4) — shared by every instance
 in the process, not per-instance.
 
-`_originHintWithoutAppVersionWarned` is also a **process-wide `static volatile bool`**, for the
-identical scoping reason as `_shouldLog`: a per-instance field would still allow unbounded stderr
-volume from a caller that constructs many short-lived `AvoInspector` instances. It is the one-shot
-latch for the gateway `originHint`-without-`AppVersion` warning (AVO-3543, see "Wire event
-construction" below) — default `false`, set to `true` only on the branch that actually writes the
-warning, and never reset.
+`_originHintWithoutAppVersionWarned` is also **process-wide `static`**, for the identical scoping
+reason as `_shouldLog`: a per-instance field would still allow unbounded stderr volume from a
+caller that constructs many short-lived `AvoInspector` instances. It is the one-shot latch for the
+gateway `originHint`-without-`AppVersion` warning (AVO-3543, see "Wire event construction" below),
+stored as an `int` (`0` = not yet warned, `1` = warned) so it can be claimed atomically with
+`Interlocked.CompareExchange`. Claimed only on the branch that actually writes the warning; never
+reset in production (an `internal` test hook re-arms it).
 
 Constants: production endpoint `https://api.avo.app/inspector/v1/track`; mock-endpoint env var name
 `AVO_INSPECTOR_MOCK_ENDPOINT`; default flush timeout `10_000` ms.
@@ -106,17 +107,24 @@ an empty list for a null map or on any internal parser error (logging the error 
 ### Tracking
 
 ```csharp
+// 1.0.0 signature, retained unchanged (binary-compatible); delegates with options: null.
 public Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(
-    string eventName, IDictionary<string, object?>? eventProperties, string? streamId = null,
-    TrackOptions? options = null)
+    string eventName, IDictionary<string, object?>? eventProperties, string? streamId = null)
+
+// Gateway-aware overload. Both trailing parameters are required so two- and three-argument
+// calls always bind unambiguously to the overload above.
+public Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(
+    string eventName, IDictionary<string, object?>? eventProperties, string? streamId,
+    TrackOptions? options)
 ```
 
 Pipeline: extract schema → resolve stream id → apply per-event sampling → enqueue into the pending
 batch → dispatch a send when a flush trigger fires.
 
 - **`options` (`TrackOptions`, AVO-3516/AVO-3543 — gateway extension, not part of
-  `avohq/spec-first-inspector-server-sdk` v1.0.0):** trailing optional parameter, default `null`, so
-  every existing three-argument call site keeps compiling and behaving identically. Threaded
+  `avohq/spec-first-inspector-server-sdk` v1.0.0):** supplied through the four-parameter overload;
+  the retained three-parameter overload passes `null`, so every existing call site — source or
+  precompiled — keeps compiling, binding, and behaving identically. Threaded
   unchanged into `BuildWireEvent`; its properties are only inspected there (see "Wire event
   construction" below), and not at all if the event is sampled out first. No lock is taken for it —
   per-call, immutable input.
@@ -167,17 +175,17 @@ resolves per this decision table (the one place this rule is stated):
 | absent | absent/blank | the instance's constructed `appVersion` (unchanged 1.0.0 behavior) |
 
 With `options == null` or an empty `new TrackOptions()`, every field above normalizes to `null` and
-the wire body is byte-for-byte identical to 1.0.0 (no `outputReference`/`originHint` keys,
-`appVersion` = the constructor value).
+the wire body carries exactly the 1.0.0 key set and values (no `outputReference`/`originHint` keys,
+`appVersion` = the constructor value); the only difference from a 1.0.0 body is `libVersion`.
 
 **One-shot gated warning.** When `originHint != null && resolvedAppVersion == null` (decision-table
-row 2 — the current v1 backend silently drops this event, AVO-3543) and `_shouldLog` is `true` and
-`_originHintWithoutAppVersionWarned` is still `false`, `BuildWireEvent` calls `Logger.Error` with a
-fixed message string (never the field values) and sets the latch. The latch caps this at one
-`stderr` line for the life of the process — this trigger condition, unlike the file's other
-`Logger.Error` call sites, can otherwise hold on every call of a healthy, spec-compliant gateway
-integration. The check-then-set is deliberately unsynchronized (no `_lock`); a benign race can log
-1–2 lines instead of exactly 1, never zero, never unbounded.
+row 2 — the current v1 backend silently drops this event, AVO-3543) and `_shouldLog` is `true`,
+`BuildWireEvent` claims the latch with `Interlocked.CompareExchange(ref latch, 1, 0) == 0` as the
+last operand of the condition, and only the single caller that wins the exchange calls
+`Logger.Error` with a fixed message string (never the field values). This caps the warning at
+exactly one `stderr` line for the life of the process, even under concurrent triggering calls —
+this trigger condition, unlike the file's other `Logger.Error` call sites, can otherwise hold on
+every call of a healthy, spec-compliant gateway integration. No `_lock` is taken.
 
 ### Flush
 

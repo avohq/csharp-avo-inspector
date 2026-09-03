@@ -18,7 +18,7 @@ namespace Avo.Inspector
     /// rate are lock-guarded; the HTTP send is performed outside the lock (SPEC.md §3.1).</para>
     /// <para><b>Shutdown contract.</b> Buffered and in-flight events are <i>at-most-once</i> and are
     /// lost on process exit. Callers MUST <see cref="Flush"/> (or <c>await</c> the
-    /// <see cref="TrackSchemaFromEvent"/> task) before the process or serverless handler exits if
+    /// <see cref="TrackSchemaFromEvent(string, IDictionary{string, object}, string)"/> task) before the process or serverless handler exits if
     /// events may be in-flight or buffered (SPEC.md §3.4, §4.6, §11).</para>
     /// </remarks>
     public sealed class AvoInspector
@@ -38,10 +38,13 @@ namespace Avo.Inspector
         private static volatile bool _shouldLog;
 
         // One-shot, process-wide latch for the originHint-without-usable-AppVersion warning
-        // (AVO-3543). Static/volatile for the same reason as _shouldLog: a per-instance field would
-        // still allow unbounded stderr volume from a caller constructing many short-lived instances.
-        // Set to true only on the branch that actually writes the warning; never reset.
-        private static volatile bool _originHintWithoutAppVersionWarned;
+        // (AVO-3543). Static for the same reason as _shouldLog: a per-instance field would still
+        // allow unbounded stderr volume from a caller constructing many short-lived instances.
+        // An int (0 = not yet warned, 1 = warned) so the claim is an atomic
+        // Interlocked.CompareExchange: exactly one caller wins even under concurrent triggering
+        // calls. Claimed only on the branch that actually writes the warning; never reset outside
+        // the internal test hook.
+        private static int _originHintWithoutAppVersionWarned;
 
         private readonly object _lock = new object();
 
@@ -244,13 +247,33 @@ namespace Avo.Inspector
         /// <param name="eventName">The tracked event name.</param>
         /// <param name="eventProperties">The event properties to extract a schema from.</param>
         /// <param name="streamId">Optional stream id; passed through verbatim (SPEC.md §4.2, §8.2).</param>
-        /// <param name="options">Optional gateway coordinates and per-event app version override
-        /// (<see cref="TrackOptions"/>); <c>null</c> sends a body identical to 1.0.0.</param>
+        public Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(
+            string eventName,
+            IDictionary<string, object?>? eventProperties,
+            string? streamId = null)
+        {
+            // Retained with its exact 1.0.0 CLR signature so precompiled consumers keep binding
+            // (no MissingMethodException on upgrade). Pure delegation; no behavior of its own.
+            return TrackSchemaFromEvent(eventName, eventProperties, streamId, null);
+        }
+
+        /// <summary>
+        /// Gateway-aware overload of <see cref="TrackSchemaFromEvent(string, IDictionary{string, object}, string)"/>
+        /// (AVO-3516 / AVO-3543): identical behavior, plus per-call <see cref="TrackOptions"/>.
+        /// Both trailing parameters are required so that two- and three-argument calls always bind
+        /// unambiguously to the 1.0.0 overload; pass <c>streamId: null</c> when no stream applies.
+        /// </summary>
+        /// <param name="eventName">The tracked event name.</param>
+        /// <param name="eventProperties">The event properties to extract a schema from.</param>
+        /// <param name="streamId">Stream id or <c>null</c>; passed through verbatim (SPEC.md §4.2, §8.2).</param>
+        /// <param name="options">Gateway coordinates and per-event app version override
+        /// (<see cref="TrackOptions"/>); <c>null</c> sends the same body as the three-parameter
+        /// overload.</param>
         public async Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(
             string eventName,
             IDictionary<string, object?>? eventProperties,
-            string? streamId = null,
-            TrackOptions? options = null)
+            string? streamId,
+            TrackOptions? options)
         {
             // SPEC.md §4.5 — after destroy(), resolve([]) with no enqueue and no HTTP call.
             lock (_lock)
@@ -392,7 +415,7 @@ namespace Avo.Inspector
         /// Cancels and cleans up (SPEC.md §4.5, §11.3): discards the pending batch unsent, abandons
         /// in-flight sends, resets the pending count to zero, and clears the scheduled-flush timer.
         /// Does NOT flush. Constructor options, the sampling rate, and the process-wide logging flag
-        /// persist. After <see cref="Destroy"/>, <see cref="TrackSchemaFromEvent"/> is a no-op.
+        /// persist. After <see cref="Destroy"/>, <see cref="TrackSchemaFromEvent(string, IDictionary{string, object}, string)"/> is a no-op.
         /// </summary>
         public void Destroy()
         {
@@ -461,16 +484,18 @@ namespace Avo.Inspector
                 : normalizedAppVersion ?? _appVersion;  // unscoped: override when provided, else fall back
 
             if (originHint != null && resolvedAppVersion == null &&
-                _shouldLog && !_originHintWithoutAppVersionWarned)
+                _shouldLog &&
+                Interlocked.CompareExchange(ref _originHintWithoutAppVersionWarned, 1, 0) == 0)
             {
                 // The current v1 backend silently drops this event (AVO-3543). Gated on the same
                 // process-wide _shouldLog flag every other Logger.Error call in this file already
-                // uses, AND capped at one line for the life of the process via the latch below —
-                // unlike ResolveStreamId's ':' warning, this condition can hold on every call of a
-                // healthy, spec-compliant gateway integration. The latch is set only on this branch
-                // (the one that actually writes), so enabling logging later still yields one signal.
+                // uses, AND capped at one line for the life of the process via the atomic latch
+                // claim above — unlike ResolveStreamId's ':' warning, this condition can hold on
+                // every call of a healthy, spec-compliant gateway integration. The claim is the
+                // last operand, so it only happens when this branch will actually write; enabling
+                // logging later still yields exactly one signal, and concurrent triggering calls
+                // cannot each win the CompareExchange.
                 // Fixed message string only: never logs OutputReference/OriginHint/AppVersion values.
-                _originHintWithoutAppVersionWarned = true;
                 Logger.Error(_shouldLog, "originHint set without a usable AppVersion; this event's " +
                     "appVersion will be sent as null, which the current v1 backend silently drops " +
                     "(AVO-3543).");
@@ -624,5 +649,15 @@ namespace Avo.Inspector
         internal string ResolvedEndpointForTesting() => ResolveEndpoint();
 
         internal static bool ShouldLogForTesting => _shouldLog;
+
+        /// <summary>
+        /// Test-only hook that re-arms the process-wide originHint-without-AppVersion warning latch
+        /// so tests of the warning are independent of execution order. Intentionally
+        /// <c>internal</c>: production code never resets it.
+        /// </summary>
+        internal static void ResetOriginHintWarningLatchForTesting()
+        {
+            Interlocked.Exchange(ref _originHintWithoutAppVersionWarned, 0);
+        }
     }
 }
