@@ -233,6 +233,7 @@ The constructor throws synchronously (an `ArgumentException`) for a missing/whit
 back to `Dev` with a warning.
 
 ### `Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(string eventName, IDictionary<string, object?>? eventProperties, string? streamId = null)`
+
 ### `Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(string eventName, IDictionary<string, object?>? eventProperties, string? streamId, TrackOptions? options)`
 
 Extracts the event's schema, applies per-event sampling, enqueues it, and dispatches a
