@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using System.Text.Json;
 using Avo.Inspector.Conformance;
 using Xunit;
@@ -21,6 +23,31 @@ namespace Avo.Inspector.Tests
         }
 
         public void Dispose() => Environment.SetEnvironmentVariable(Var, _previous);
+    }
+
+    /// <summary>
+    /// Redirects <see cref="Console.Error"/> to an in-memory buffer for the scope's lifetime,
+    /// restoring the original writer on dispose. Mirrors <see cref="MockEndpointScope"/>'s
+    /// constructor/dispose shape. Used only by the gated one-shot warning test — no other test in
+    /// the suite asserts on stderr content (see <c>LoggingTests.cs</c>, which asserts only the
+    /// <c>_shouldLog</c> flag via <c>AvoInspector.ShouldLogForTesting</c>).
+    /// </summary>
+    internal sealed class ConsoleErrorScope : IDisposable
+    {
+        private readonly TextWriter _previous;
+        private readonly StringWriter _buffer;
+
+        public ConsoleErrorScope()
+        {
+            _previous = Console.Error;
+            _buffer = new StringWriter(new StringBuilder());
+            Console.SetError(_buffer);
+        }
+
+        /// <summary>Everything written to <c>Console.Error</c> since this scope was created.</summary>
+        public string Output => _buffer.ToString();
+
+        public void Dispose() => Console.SetError(_previous);
     }
 
     internal static class TestNet

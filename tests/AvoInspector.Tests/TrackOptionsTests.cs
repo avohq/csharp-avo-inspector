@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 using Avo.Inspector.Conformance;
 using Xunit;
 
@@ -521,6 +523,152 @@ namespace Avo.Inspector.Tests
                     Assert.Equal("5.1.0", evt.GetProperty("appVersion").GetString());
                 }
             }
+        }
+
+        private static int CountOccurrences(string haystack, string needle)
+        {
+            var count = 0;
+            var index = 0;
+            while ((index = haystack.IndexOf(needle, index, StringComparison.Ordinal)) != -1)
+            {
+                count++;
+                index += needle.Length;
+            }
+            return count;
+        }
+
+        /// <summary>
+        /// Covers the gated, one-shot <c>Logger.Error</c> warning added in <c>BuildWireEvent</c>
+        /// for decision-table row 2 (<c>OriginHint</c> set, resolved <c>appVersion</c> null), and
+        /// its process-wide, never-reset <c>_originHintWithoutAppVersionWarned</c> latch. This is
+        /// the ONLY test in the whole feature's matrix allowed to construct a <c>dev</c> instance
+        /// or leave logging enabled — every other test in <c>TrackOptionsTests.cs</c> uses
+        /// <c>staging</c> specifically so it cannot consume this latch out of order (see this
+        /// file's class remarks and <c>planning/gateway-track-options/spec.md</c>'s Test Plan
+        /// leading note). Steps run in a fixed order within this single method: the latch is
+        /// process-wide, so a second, independent test method touching the same trigger condition
+        /// would create an undocumented, execution-order-dependent coupling xunit does not
+        /// guarantee against.
+        /// </summary>
+        [Fact]
+        public async Task OriginHint_without_usable_AppVersion_logs_gated_warning_once_matching_shouldLog_flag()
+        {
+            const string WarningText =
+                "originHint set without a usable AppVersion; this event's appVersion will be sent " +
+                "as null, which the current v1 backend silently drops (AVO-3543).";
+
+            using var server = new TestInspectorServer();
+            using (new MockEndpointScope(server.BaseUrl))
+            using (var console = new ConsoleErrorScope())
+            {
+                // (0) dev instance — construction alone sets the process-wide _shouldLog flag to
+                // true (dev default), no explicit EnableLogging(true) needed. A triggering call
+                // (OutputReference AND OriginHint both actually set, AppVersion absent) writes
+                // exactly one stderr line containing the fixed warning text and none of the real,
+                // present option values ("meta-x7k2q", "web") — a non-vacuous leak-check.
+                var dev = new AvoInspector("k", "dev", "1.0.0");
+                Assert.True(AvoInspector.ShouldLogForTesting);
+
+                await dev.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1",
+                    new TrackOptions { OutputReference = "meta-x7k2q", OriginHint = "web" });
+
+                var afterFirstCall = console.Output;
+                Assert.Equal(1, CountOccurrences(afterFirstCall, WarningText));
+                Assert.DoesNotContain("meta-x7k2q", afterFirstCall);
+                Assert.DoesNotContain("web", afterFirstCall);
+
+                // (1) four more identical triggering calls (five total across steps 0-1) still
+                // leave exactly one warning line — the one-shot, process-wide latch proof. If the
+                // latch were absent this would observe five lines, not one.
+                for (var i = 0; i < 4; i++)
+                {
+                    await dev.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1",
+                        new TrackOptions { OutputReference = "meta-x7k2q", OriginHint = "web" });
+                }
+
+                Assert.Equal(1, CountOccurrences(console.Output, WarningText));
+
+                // (2) a separate, never-before-exercised staging instance (logging disabled by
+                // default) given the identical triggering TrackOptions writes nothing to stderr —
+                // proves the _shouldLog gate independently of the latch (Logger.Error
+                // short-circuits on _shouldLog before the latch is ever consulted), so this
+                // sub-case does not depend on step 0/1's latch state.
+                var staging = new AvoInspector("k", "staging", "1.0.0", batchSize: 1);
+                Assert.False(AvoInspector.ShouldLogForTesting);
+
+                var beforeStagingCall = console.Output;
+                await staging.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1",
+                    new TrackOptions { OutputReference = "meta-x7k2q", OriginHint = "web" });
+
+                Assert.Equal(beforeStagingCall, console.Output); // nothing new written to stderr
+                Assert.Equal(1, CountOccurrences(console.Output, WarningText)); // still only step 0/1's line
+
+                // (3) decision table rows 1/3/4 (AppVersion non-blank, or OriginHint absent) never
+                // satisfy the trigger condition, so no additional warning is written on the dev
+                // instance. Note: constructing the staging instance in step (2) reset the
+                // process-wide _shouldLog flag to false, so logging is off here; these rows fail
+                // the trigger condition's earlier clauses regardless of the flag.
+                var nonTriggeringOptions = new[]
+                {
+                    new TrackOptions { OriginHint = "web", AppVersion = "5.1.0" }, // row 1
+                    new TrackOptions { AppVersion = "5.1.0" },                     // row 3
+                    new TrackOptions(),                                           // row 4
+                };
+                foreach (var options in nonTriggeringOptions)
+                {
+                    await dev.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1", options);
+                }
+
+                Assert.Equal(1, CountOccurrences(console.Output, WarningText));
+
+                // The latch is never reset, but _shouldLog is process-wide and mutable — restore
+                // it to the suite's default (off) so no later test observes logging left enabled.
+                dev.EnableLogging(false);
+                Assert.False(AvoInspector.ShouldLogForTesting);
+
+                dev.Destroy();
+                staging.Destroy();
+            }
+        }
+
+        /// <summary>
+        /// Makes the "XML doc summaries" Acceptance Criterion binary/CI-enforced, since
+        /// <c>AvoInspector.csproj</c> suppresses <c>CS1591</c> project-wide and so gives zero
+        /// compiler enforcement on its own. Reads the package's <b>compiled</b> XML doc file (not
+        /// the source <c>.cs</c> file), which <c>AvoInspector.Tests.csproj</c>'s
+        /// <c>ProjectReference</c> to a project built with <c>GenerateDocumentationFile=true</c>
+        /// copies next to <c>AvoInspector.dll</c> in this test project's own output directory.
+        /// </summary>
+        [Fact]
+        public void TrackOptions_type_and_all_three_properties_have_xmldoc_summaries()
+        {
+            var xmlPath = Path.ChangeExtension(typeof(TrackOptions).Assembly.Location, ".xml");
+
+            Assert.True(File.Exists(xmlPath),
+                "Expected the compiled XML doc file at \"" + xmlPath + "\" (copied next to " +
+                "AvoInspector.dll via ProjectReference + GenerateDocumentationFile=true). A " +
+                "missing file means either GenerateDocumentationFile was turned off or " +
+                "AvoInspector.Tests.csproj's reference kind reverted to PackageReference — " +
+                "both real regressions this test exists to catch.");
+
+            var doc = XDocument.Load(xmlPath);
+
+            AssertHasNonEmptySummary(doc, "T:Avo.Inspector.TrackOptions");
+            AssertHasNonEmptySummary(doc, "P:Avo.Inspector.TrackOptions.OutputReference");
+            AssertHasNonEmptySummary(doc, "P:Avo.Inspector.TrackOptions.OriginHint");
+            AssertHasNonEmptySummary(doc, "P:Avo.Inspector.TrackOptions.AppVersion");
+        }
+
+        private static void AssertHasNonEmptySummary(XDocument doc, string memberName)
+        {
+            var member = doc.Descendants("member")
+                .FirstOrDefault(m => (string?)m.Attribute("name") == memberName);
+            Assert.True(member != null, "No <member name=\"" + memberName + "\"> entry found in the XML doc file.");
+
+            var summary = member!.Element("summary");
+            Assert.True(summary != null, "<member name=\"" + memberName + "\"> has no <summary> element.");
+            Assert.False(string.IsNullOrWhiteSpace(summary!.Value),
+                "<member name=\"" + memberName + "\">'s <summary> is empty.");
         }
     }
 }
