@@ -168,16 +168,21 @@ namespace Avo.Inspector.Tests
         }
 
         /// <summary>
-        /// Trimming does not weaken the guard: whitespace around an embedded CRLF is removed, the
-        /// CRLF is not, and the send still fails closed with nothing transmitted.
+        /// Trimming does not weaken the guard. <c>Trim</c> strips only surrounding whitespace, so a
+        /// control character with content on both sides survives it, and NUL survives even in
+        /// trailing position because NUL is not whitespace. Both still fail closed with nothing
+        /// transmitted — which is what keeps the earlier repair from being a hole.
         /// </summary>
-        [Fact]
-        public async Task Trimming_does_not_rescue_a_key_with_an_embedded_control_character()
+        [Theory]
+        [InlineData("  key\r\nX-Injected: 1  ")] // embedded CRLF, whitespace stripped from around it
+        [InlineData("  key\0truncated  ")]       // embedded NUL
+        [InlineData("  key\0  ")]                // trailing NUL: not whitespace, so Trim leaves it
+        public async Task Trimming_does_not_rescue_a_key_whose_control_character_survives_it(string key)
         {
             using var server = new TestInspectorServer();
             using (new MockEndpointScope(server.BaseUrl))
             {
-                var inspector = new AvoInspector("  key\r\nX-Injected: 1  ", "staging", "1.0.0", batchSize: 1);
+                var inspector = new AvoInspector(key, "staging", "1.0.0", batchSize: 1);
                 await inspector.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1");
                 await inspector.Flush();
 

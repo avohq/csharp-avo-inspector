@@ -70,8 +70,10 @@ public AvoInspector(string apiKey, string env, string version, string? appName =
   API key is a token, so surrounding whitespace is never significant; trimming cannot invalidate a
   working key, and it turns a key pasted with a trailing newline from total silent telemetry loss
   (it would fail the §7.2 header guard on every send) into a working integration. It costs no
-  security: a CR, LF or NUL *embedded* in the key survives `Trim` and is still rejected by
-  `InspectorHttpSender` before the wire. Whitespace-only still throws, since `Trim` leaves it empty.
+  security, because `Trim` strips only surrounding whitespace: it repairs exactly the accident — a
+  trailing CR or LF with nothing after it — while a control character with content on both sides
+  survives it, and NUL survives anywhere since NUL is not whitespace. Whatever survives is still
+  rejected by `InspectorHttpSender` before the wire. Whitespace-only still throws, since `Trim` leaves it empty.
 - Both overloads converge on the same init logic and **validate in order**: `apiKey` first, then
   `version`. Each must be non-null/non-empty/non-whitespace, else throw `ArgumentException` with the
   **exact** spec messages — `"[Avo Inspector] No API key provided. Inspector can't operate without

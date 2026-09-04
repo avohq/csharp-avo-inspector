@@ -119,8 +119,10 @@ namespace Avo.Inspector
             // a trailing newline. Without the trim that key would fail the §7.2 header guard on
             // every send, which in a batching sender that never throws at the caller means
             // SendStatus.Error for the life of the process — silent in prod, where logging is off by
-            // default. Trimming costs no security: an embedded CR, LF or NUL survives Trim and is
-            // still rejected before the wire.
+            // default. Trimming costs no security, because Trim strips only surrounding whitespace:
+            // it repairs exactly the accident — a trailing CR or LF with nothing after it — while a
+            // control character with content on both sides survives it, and NUL survives anywhere
+            // since NUL is not whitespace. Whatever survives, the sender still rejects before the wire.
             //
             // Trimming once here rather than at each use also keeps the header copy and the body
             // copy of apiKey byte-identical, which the conformance runner asserts. Whitespace-only
