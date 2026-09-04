@@ -71,7 +71,7 @@ namespace Avo.Inspector.Example
         {
             Header("2. Track + batch + flush — DRY RUN against a local loopback sink");
             Console.WriteLine("(No credentials and no network egress. The sink prints exactly what the");
-            Console.WriteLine(" SDK would POST to https://api.avo.app/inspector/v1/track.)");
+            Console.WriteLine(" SDK would POST to the Avo Inspector API.)");
             Console.WriteLine();
 
             using var sink = new LocalSink();

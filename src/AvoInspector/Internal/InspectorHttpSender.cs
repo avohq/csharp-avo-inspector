@@ -37,9 +37,9 @@ namespace Avo.Inspector.Internal
     }
 
     /// <summary>
-    /// Performs the Inspector HTTP POST (SPEC.md §7): JSON array body, mandatory gzip for bodies
-    /// ≥ 1024 bytes (§7.3.5), a 10-second timeout (§7.6), and the §7.5 error taxonomy. Never throws
-    /// — every failure is mapped to <see cref="SendStatus"/>.
+    /// Performs the Inspector HTTP POST (SPEC.md §7): JSON array body, the §7.2 request headers,
+    /// mandatory gzip for bodies ≥ 1024 bytes (§7.3.5), a 10-second timeout (§7.6), and the §7.5
+    /// error taxonomy. Never throws — every failure is mapped to <see cref="SendStatus"/>.
     /// </summary>
     internal static class InspectorHttpSender
     {
@@ -63,12 +63,42 @@ namespace Avo.Inspector.Internal
         /// Serializes and sends one batch. Returns a <see cref="SendResult"/>; never throws.
         /// </summary>
         /// <param name="endpoint">Resolved endpoint URL (SPEC.md §7.1).</param>
+        /// <param name="apiKey">Inspector API key; sent as the REQUIRED <c>api-key</c> header (SPEC.md §7.2).</param>
+        /// <param name="env">Environment wire string; sent as the REQUIRED <c>env</c> header (SPEC.md §7.2).</param>
         /// <param name="batch">The events to send as a single JSON array.</param>
         /// <param name="shouldLog">Whether diagnostics may be written to stderr.</param>
         /// <param name="abortToken">Cancelled by <c>Destroy()</c> to abandon an in-flight send.</param>
         public static async Task<SendResult> SendAsync(
-            string endpoint, WireEvent[] batch, bool shouldLog, CancellationToken abortToken = default)
+            string endpoint,
+            string apiKey,
+            string env,
+            WireEvent[] batch,
+            bool shouldLog,
+            CancellationToken abortToken = default)
         {
+            // Header-injection guard. SPEC.md §7.2 sends the apiKey as a request header, and a value
+            // carrying CR, LF or NUL can terminate the header line and inject content into the
+            // outbound request. The headers below are set with TryAddWithoutValidation, which by
+            // definition skips the checks that would have rejected exactly that. There is no
+            // transport backstop to fall back on: measured on net8.0 with this guard removed,
+            // SocketsHttpHandler writes such a value through unaltered and the receiving server
+            // parses the injected text as a genuine extra header — an apiKey of
+            // "key\r\nX-Injected: 1" arrives as `api-key: key` plus `X-Injected: 1`. Reject here
+            // instead, before serializing or opening a connection, so the failure is contained and
+            // observable rather than transmitted.
+            //
+            // apiKey is the only one of the three header values whose content a caller supplies.
+            // env is AvoInspectorEnv.ToWireString(), always one of the literals "dev"/"staging"/
+            // "prod"; X-Avo-Client is the InspectorVersion.LibPlatform compile-time constant. Neither
+            // can carry a control character, so neither is re-checked. Any header added later whose
+            // value is not a constant needs this same guard.
+            if (!IsSafeHeaderValue(apiKey))
+            {
+                // SPEC.md §7.5.1 — never log the apiKey, so name the fault without echoing the value.
+                Logger.Error(shouldLog, "send failed (apiKey contains CR, LF or NUL and cannot be sent as a header)");
+                return new SendResult(SendStatus.Error, null);
+            }
+
             byte[] rawBytes;
             try
             {
@@ -109,6 +139,22 @@ namespace Avo.Inspector.Internal
                 {
                     request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
+                    // SPEC.md §7.2 — the unified /inspector/v2/track endpoint reads the credential
+                    // and the environment from headers (a missing or invalid one is a 400) and
+                    // attributes traffic by sender at the edge via X-Avo-Client, without decoding
+                    // the body. apiKey and env stay in the body as well (§7.3): v2 ignores the body
+                    // copies, and keeping them holds one body shape and one JSON Schema for every
+                    // sender. X-Avo-Client carries this SDK's libPlatform, so the token is "csharp".
+                    //
+                    // TryAddWithoutValidation rather than Add: Add throws FormatException on a
+                    // pathological apiKey, and that would escape SendAsync's "never throws" contract
+                    // from outside the try below. Nothing is lost by skipping its validation — the
+                    // guard at the top of this method has already rejected the only value that could
+                    // have failed it, and did so without transmitting.
+                    request.Headers.TryAddWithoutValidation("api-key", apiKey);
+                    request.Headers.TryAddWithoutValidation("env", env);
+                    request.Headers.TryAddWithoutValidation("X-Avo-Client", InspectorVersion.LibPlatform);
+
                     try
                     {
                         using (var response = await SharedClient
@@ -139,6 +185,31 @@ namespace Avo.Inspector.Internal
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// True when <paramref name="value"/> is safe to write as an HTTP header value — that is,
+        /// it carries no CR, LF or NUL, the characters that could terminate the header line and
+        /// inject request content. Shared with the constructor's SPEC.md §4.1 validation so the two
+        /// agree by construction; this method is the invariant that actually guards the wire, and
+        /// still runs for a key that reached the sender without passing through that constructor
+        /// check.
+        /// </summary>
+        internal static bool IsSafeHeaderValue(string? value)
+        {
+            if (value == null)
+            {
+                return false;
+            }
+            for (var i = 0; i < value.Length; i++)
+            {
+                var c = value[i];
+                if (c == '\r' || c == '\n' || c == '\0')
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         private static bool TryGzip(byte[] raw, out byte[] compressed)

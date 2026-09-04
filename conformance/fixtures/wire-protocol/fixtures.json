@@ -2,14 +2,27 @@
   {
     "fixture_id": "wire-1",
     "description": "Basic event with primitive properties sends correct wire body",
-    "constructor": { "apiKey": "test-key", "env": "dev", "version": "1.0.0", "appName": "TestApp" },
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0",
+      "appName": "TestApp"
+    },
     "operation": "trackSchemaFromEvent",
     "input": {
       "eventName": "User Signed Up",
-      "eventProperties": { "plan": "pro", "seats": 3 },
+      "eventProperties": {
+        "plan": "pro",
+        "seats": 3
+      },
       "streamId": "stream-abc"
     },
-    "mock_response": { "status": 200, "body": { "samplingRate": 1.0 } },
+    "mock_response": {
+      "status": 200,
+      "body": {
+        "samplingRate": 1.0
+      }
+    },
     "expected_request_body": [
       {
         "apiKey": "test-key",
@@ -20,27 +33,48 @@
         "libPlatform": "<sdk-platform>",
         "messageId": "<uuid-v4>",
         "streamId": "stream-abc",
-        "sessionId": "",
         "createdAt": "<iso8601>",
         "samplingRate": 1.0,
         "type": "event",
         "eventName": "User Signed Up",
         "eventProperties": [
-          { "propertyName": "plan", "propertyType": "string" },
-          { "propertyName": "seats", "propertyType": "int" }
+          {
+            "propertyName": "plan",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "seats",
+            "propertyType": "int"
+          }
         ]
       }
     ],
+    "expected_request_headers": {
+      "api-key": "test-key",
+      "env": "dev",
+      "x-avo-client": "<sdk-platform>"
+    },
     "expected_promise_outcome": "resolve",
-    "notes": "libVersion, messageId, and createdAt are validated by format only (not exact value) — their placeholder values signal format-validation to the suite runner. libVersion must be a plain SemVer string (e.g., '1.2.0'). libPlatform must be a non-empty string matching the SDK language."
+    "notes": "libVersion, messageId, and createdAt are validated by format only (not exact value) — their placeholder values signal format-validation to the suite runner. libVersion must be a plain SemVer string (e.g., '1.2.0'). libPlatform must be a non-empty string matching the SDK language. expected_request_headers pins the SPEC.md §7.2 required headers: api-key carries the constructor apiKey verbatim, env carries the constructor env ('dev' here; batch-1 pins 'staging' so the value cannot be hardcoded), and x-avo-client is the SDK's platform token — format-validated by '<sdk-platform>' because it is SDK-specific, and additionally required by the runner to equal the libPlatform of every event in the same request."
   },
   {
     "fixture_id": "wire-2",
     "description": "Event is dropped when samplingRate is 0.0 (effectively drop all)",
-    "constructor": { "apiKey": "test-key", "env": "dev", "version": "1.0.0" },
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0"
+    },
     "operation": "trackSchemaFromEvent",
-    "input": { "eventName": "Dropped Event", "eventProperties": { "x": 1 } },
-    "precondition": { "samplingRate": 0.0 },
+    "input": {
+      "eventName": "Dropped Event",
+      "eventProperties": {
+        "x": 1
+      }
+    },
+    "precondition": {
+      "samplingRate": 0.0
+    },
     "mock_response": null,
     "expected_request_count": 0,
     "expected_promise_outcome": "resolve",
@@ -49,10 +83,20 @@
   {
     "fixture_id": "wire-3",
     "description": "Non-200 HTTP response resolves the promise (does not reject)",
-    "constructor": { "apiKey": "test-key", "env": "dev", "version": "1.0.0" },
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0"
+    },
     "operation": "trackSchemaFromEvent",
-    "input": { "eventName": "Test Event", "eventProperties": {} },
-    "mock_response": { "status": 500, "body": {} },
+    "input": {
+      "eventName": "Test Event",
+      "eventProperties": {}
+    },
+    "mock_response": {
+      "status": 500,
+      "body": {}
+    },
     "expected_promise_outcome": "resolve",
     "expected_resolve_value": [],
     "notes": "SDK MUST resolve (not reject) on non-200. Resolved value is [] (empty event properties yield empty schema)."
@@ -60,14 +104,24 @@
   {
     "fixture_id": "wire-4",
     "description": "streamId containing colon characters is passed through verbatim as streamId",
-    "constructor": { "apiKey": "test-key", "env": "dev", "version": "1.0.0", "appName": "TestApp" },
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0",
+      "appName": "TestApp"
+    },
     "operation": "trackSchemaFromEvent",
     "input": {
       "eventName": "Page Viewed",
       "eventProperties": {},
       "streamId": "stream:with:colons"
     },
-    "mock_response": { "status": 200, "body": { "samplingRate": 1.0 } },
+    "mock_response": {
+      "status": 200,
+      "body": {
+        "samplingRate": 1.0
+      }
+    },
     "expected_request_body": [
       {
         "apiKey": "test-key",
@@ -78,7 +132,6 @@
         "libPlatform": "<sdk-platform>",
         "messageId": "<uuid-v4>",
         "streamId": "stream:with:colons",
-        "sessionId": "",
         "createdAt": "<iso8601>",
         "samplingRate": 1.0,
         "type": "event",
@@ -92,14 +145,24 @@
   {
     "fixture_id": "wire-5",
     "description": "Empty string streamId is treated as no stream ID; streamId becomes empty string",
-    "constructor": { "apiKey": "test-key", "env": "dev", "version": "1.0.0", "appName": "TestApp" },
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0",
+      "appName": "TestApp"
+    },
     "operation": "trackSchemaFromEvent",
     "input": {
       "eventName": "Page Viewed",
       "eventProperties": {},
       "streamId": ""
     },
-    "mock_response": { "status": 200, "body": { "samplingRate": 1.0 } },
+    "mock_response": {
+      "status": 200,
+      "body": {
+        "samplingRate": 1.0
+      }
+    },
     "expected_request_body": [
       {
         "apiKey": "test-key",
@@ -110,7 +173,6 @@
         "libPlatform": "<sdk-platform>",
         "messageId": "<uuid-v4>",
         "streamId": "",
-        "sessionId": "",
         "createdAt": "<iso8601>",
         "samplingRate": 1.0,
         "type": "event",
@@ -124,23 +186,49 @@
   {
     "fixture_id": "wire-6",
     "description": "Large body (>= 1024 bytes) round-trips correctly; gzip compression, if applied, is valid and transparent",
-    "constructor": { "apiKey": "test-key", "env": "dev", "version": "1.0.0", "appName": "TestApp" },
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0",
+      "appName": "TestApp"
+    },
     "operation": "trackSchemaFromEvent",
     "input": {
       "eventName": "Large Payload Event",
       "eventProperties": {
-        "attribute_01": "value", "attribute_02": "value", "attribute_03": "value",
-        "attribute_04": "value", "attribute_05": "value", "attribute_06": "value",
-        "attribute_07": "value", "attribute_08": "value", "attribute_09": "value",
-        "attribute_10": "value", "attribute_11": "value", "attribute_12": "value",
-        "attribute_13": "value", "attribute_14": "value", "attribute_15": "value",
-        "attribute_16": "value", "attribute_17": "value", "attribute_18": "value",
-        "attribute_19": "value", "attribute_20": "value", "attribute_21": "value",
-        "attribute_22": "value", "attribute_23": "value", "attribute_24": "value"
+        "attribute_01": "value",
+        "attribute_02": "value",
+        "attribute_03": "value",
+        "attribute_04": "value",
+        "attribute_05": "value",
+        "attribute_06": "value",
+        "attribute_07": "value",
+        "attribute_08": "value",
+        "attribute_09": "value",
+        "attribute_10": "value",
+        "attribute_11": "value",
+        "attribute_12": "value",
+        "attribute_13": "value",
+        "attribute_14": "value",
+        "attribute_15": "value",
+        "attribute_16": "value",
+        "attribute_17": "value",
+        "attribute_18": "value",
+        "attribute_19": "value",
+        "attribute_20": "value",
+        "attribute_21": "value",
+        "attribute_22": "value",
+        "attribute_23": "value",
+        "attribute_24": "value"
       },
       "streamId": "stream-large"
     },
-    "mock_response": { "status": 200, "body": { "samplingRate": 1.0 } },
+    "mock_response": {
+      "status": 200,
+      "body": {
+        "samplingRate": 1.0
+      }
+    },
     "expected_request_body": [
       {
         "apiKey": "test-key",
@@ -151,54 +239,139 @@
         "libPlatform": "<sdk-platform>",
         "messageId": "<uuid-v4>",
         "streamId": "stream-large",
-        "sessionId": "",
         "createdAt": "<iso8601>",
         "samplingRate": 1.0,
         "type": "event",
         "eventName": "Large Payload Event",
         "eventProperties": [
-          { "propertyName": "attribute_01", "propertyType": "string" },
-          { "propertyName": "attribute_02", "propertyType": "string" },
-          { "propertyName": "attribute_03", "propertyType": "string" },
-          { "propertyName": "attribute_04", "propertyType": "string" },
-          { "propertyName": "attribute_05", "propertyType": "string" },
-          { "propertyName": "attribute_06", "propertyType": "string" },
-          { "propertyName": "attribute_07", "propertyType": "string" },
-          { "propertyName": "attribute_08", "propertyType": "string" },
-          { "propertyName": "attribute_09", "propertyType": "string" },
-          { "propertyName": "attribute_10", "propertyType": "string" },
-          { "propertyName": "attribute_11", "propertyType": "string" },
-          { "propertyName": "attribute_12", "propertyType": "string" },
-          { "propertyName": "attribute_13", "propertyType": "string" },
-          { "propertyName": "attribute_14", "propertyType": "string" },
-          { "propertyName": "attribute_15", "propertyType": "string" },
-          { "propertyName": "attribute_16", "propertyType": "string" },
-          { "propertyName": "attribute_17", "propertyType": "string" },
-          { "propertyName": "attribute_18", "propertyType": "string" },
-          { "propertyName": "attribute_19", "propertyType": "string" },
-          { "propertyName": "attribute_20", "propertyType": "string" },
-          { "propertyName": "attribute_21", "propertyType": "string" },
-          { "propertyName": "attribute_22", "propertyType": "string" },
-          { "propertyName": "attribute_23", "propertyType": "string" },
-          { "propertyName": "attribute_24", "propertyType": "string" }
+          {
+            "propertyName": "attribute_01",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_02",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_03",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_04",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_05",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_06",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_07",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_08",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_09",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_10",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_11",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_12",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_13",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_14",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_15",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_16",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_17",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_18",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_19",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_20",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_21",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_22",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_23",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "attribute_24",
+            "propertyType": "string"
+          }
         ]
       }
     ],
-    "expected_request_headers": { "content-encoding": "gzip" },
+    "expected_request_headers": {
+      "content-encoding": "gzip"
+    },
     "expected_promise_outcome": "resolve",
-    "notes": "The serialized body exceeds the 1024-byte gzip threshold (SPEC.md §7.3.7). On any gzip-capable runtime — which every conformance harness is — the SDK MUST send it with 'Content-Encoding: gzip'; this fixture asserts that header. The mock server MUST gunzip the body before parsing; the decompressed body MUST match expected_request_body byte-for-byte after format validation, and a 'gzip'-labeled body that fails to gunzip MUST fail the fixture. EXEMPTION: an SDK targeting a runtime with no gzip implementation is exempt from the content-encoding assertion (it must still send a correct uncompressed body) and MUST document the limitation in its README."
+    "notes": "The serialized body exceeds the 1024-byte gzip threshold (SPEC.md §7.3.5). On any gzip-capable runtime — which every conformance harness is — the SDK MUST send it with 'Content-Encoding: gzip'; this fixture asserts that header. The mock server MUST gunzip the body before parsing; the decompressed body MUST match expected_request_body byte-for-byte after format validation, and a 'gzip'-labeled body that fails to gunzip MUST fail the fixture. EXEMPTION: an SDK targeting a runtime with no gzip implementation is exempt from the content-encoding assertion (it must still send a correct uncompressed body) and MUST document the limitation in its README."
   },
   {
     "fixture_id": "wire-7",
     "description": "Small body (< 1024 bytes) is sent uncompressed with no Content-Encoding header",
-    "constructor": { "apiKey": "test-key", "env": "dev", "version": "1.0.0", "appName": "TestApp" },
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0",
+      "appName": "TestApp"
+    },
     "operation": "trackSchemaFromEvent",
     "input": {
       "eventName": "Small Event",
-      "eventProperties": { "plan": "pro" },
+      "eventProperties": {
+        "plan": "pro"
+      },
       "streamId": "stream-small"
     },
-    "mock_response": { "status": 200, "body": { "samplingRate": 1.0 } },
+    "mock_response": {
+      "status": 200,
+      "body": {
+        "samplingRate": 1.0
+      }
+    },
     "expected_request_body": [
       {
         "apiKey": "test-key",
@@ -209,33 +382,351 @@
         "libPlatform": "<sdk-platform>",
         "messageId": "<uuid-v4>",
         "streamId": "stream-small",
-        "sessionId": "",
         "createdAt": "<iso8601>",
         "samplingRate": 1.0,
         "type": "event",
         "eventName": "Small Event",
         "eventProperties": [
-          { "propertyName": "plan", "propertyType": "string" }
+          {
+            "propertyName": "plan",
+            "propertyType": "string"
+          }
         ]
       }
     ],
-    "expected_request_headers": { "content-encoding": null },
+    "expected_request_headers": {
+      "content-encoding": null
+    },
     "expected_promise_outcome": "resolve",
-    "notes": "The serialized body is well below the 1024-byte gzip threshold (SPEC.md §7.3.7). The SDK MUST send it uncompressed: the request MUST NOT carry a 'Content-Encoding' header. The suite runner asserts header absence via expected_request_headers: { content-encoding: null }."
+    "notes": "The serialized body is well below the 1024-byte gzip threshold (SPEC.md §7.3.5). The SDK MUST send it uncompressed: the request MUST NOT carry a 'Content-Encoding' header. The suite runner asserts header absence via expected_request_headers: { content-encoding: null }."
   },
   {
     "fixture_id": "wire-8",
     "description": "Batching: with batchSize > 1, a single tracked event is buffered, not sent — zero HTTP calls before flush",
-    "constructor": { "apiKey": "test-key", "env": "staging", "version": "1.0.0", "appName": "TestApp", "batchSize": 30 },
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "staging",
+      "version": "1.0.0",
+      "appName": "TestApp",
+      "batchSize": 30
+    },
     "operation": "trackSchemaFromEvent",
     "input": {
       "eventName": "Buffered Event",
-      "eventProperties": { "plan": "pro" },
+      "eventProperties": {
+        "plan": "pro"
+      },
       "streamId": "stream-batch"
     },
     "mock_response": null,
     "expected_request_count": 0,
     "expected_promise_outcome": "resolve",
     "notes": "Batching is active because env is 'staging' (so batchSize is NOT forced to 1) and batchSize is 30. A single trackSchemaFromEvent enqueues one event, which is below the size threshold, so the SDK MUST NOT send an HTTP request before a flush — the suite runner verifies zero captured requests. The promise still resolves (with the extracted schema) at enqueue time (SPEC.md §4.2, §7.5.2). The harness invocation completes well within batchFlushSeconds (30s), so no time-based flush occurs. This is the only batching behavior the single-invocation harness can assert automatically; flush()-drains, size-triggered flush, max-queue overflow, and no-requeue-on-rejection are now covered by the dedicated batching suite (batch-1 through batch-6). Only time-based flush and transient-failure drop remain in the manual matrix in conformance/README.md (they need a controllable clock and a connection-drop mock)."
+  },
+  {
+    "fixture_id": "wire-9",
+    "description": "Gateway options: outputReference, originHint and per-event appVersion all set are sent as top-level siblings of eventProperties, trimmed — internal line terminators are preserved",
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0",
+      "appName": "TestApp"
+    },
+    "operation": "trackSchemaFromEvent",
+    "input": {
+      "eventName": "purchase",
+      "eventProperties": {
+        "plan": "pro",
+        "seats": 3
+      },
+      "streamId": "stream-gw",
+      "options": {
+        "outputReference": "  meta-x7k2q\nmeta-b3n8w  ",
+        "originHint": "\tandroid\rtv \n",
+        "originAppVersion": "  4.2.0  "
+      }
+    },
+    "mock_response": {
+      "status": 200,
+      "body": {
+        "samplingRate": 1.0
+      }
+    },
+    "expected_request_body": [
+      {
+        "apiKey": "test-key",
+        "appName": "TestApp",
+        "appVersion": "4.2.0",
+        "libVersion": "<semver>",
+        "env": "dev",
+        "libPlatform": "<sdk-platform>",
+        "messageId": "<uuid-v4>",
+        "streamId": "stream-gw",
+        "createdAt": "<iso8601>",
+        "samplingRate": 1.0,
+        "type": "event",
+        "eventName": "purchase",
+        "outputReference": "meta-x7k2q\nmeta-b3n8w",
+        "originHint": "android\rtv",
+        "eventProperties": [
+          {
+            "propertyName": "plan",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "seats",
+            "propertyType": "int"
+          }
+        ]
+      }
+    ],
+    "expected_promise_outcome": "resolve",
+    "notes": "SPEC.md §4.2.1 / §7.3.6 row 1 (originHint set + appVersion provided). The harness passes input.options VERBATIM, in its SDK's own call-site shape (the object as the fourth argument for a grouped SDK, each key as its matching top-level parameter for a flattened one; SPEC.md §4.2.1). outputReference and originHint MUST be top-level keys of the event object, never inside eventProperties; appVersion is the per-event override '4.2.0', not the constructor's '1.0.0'. eventProperties is unchanged by options. All three option values arrive padded, so this fixture also pins the normalization rule as trim-only: leading and trailing whitespace (space, tab, CR, LF) is removed, and whitespace INSIDE a value — the LF in outputReference and the CR in originHint — is preserved byte for byte. An SDK that strips, collapses or rejects internal line terminators fails here. The schemas encode the same rule: the outputReference / originHint pattern is ^(?!\\s)(?![\\s\\S]*\\s$)[\\s\\S]+$."
+  },
+  {
+    "fixture_id": "wire-10",
+    "description": "originHint set without a per-event appVersion: originHint is trimmed, appVersion is a literal null, outputReference is absent",
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0",
+      "appName": "TestApp"
+    },
+    "operation": "trackSchemaFromEvent",
+    "input": {
+      "eventName": "purchase",
+      "eventProperties": {
+        "plan": "pro",
+        "seats": 3
+      },
+      "streamId": "stream-gw",
+      "options": {
+        "originHint": "  android  "
+      }
+    },
+    "mock_response": {
+      "status": 200,
+      "body": {
+        "samplingRate": 1.0
+      }
+    },
+    "expected_request_body": [
+      {
+        "apiKey": "test-key",
+        "appName": "TestApp",
+        "appVersion": null,
+        "libVersion": "<semver>",
+        "env": "dev",
+        "libPlatform": "<sdk-platform>",
+        "messageId": "<uuid-v4>",
+        "streamId": "stream-gw",
+        "createdAt": "<iso8601>",
+        "samplingRate": 1.0,
+        "type": "event",
+        "eventName": "purchase",
+        "outputReference": "<absent>",
+        "originHint": "android",
+        "eventProperties": [
+          {
+            "propertyName": "plan",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "seats",
+            "propertyType": "int"
+          }
+        ]
+      }
+    ],
+    "expected_promise_outcome": "resolve",
+    "notes": "SPEC.md §7.3.6 row 2 (originHint set + no usable appVersion). The event is source-scoped, so the constructor version '1.0.0' never applies: appVersion MUST be a literal JSON null (the key is still present). originHint is trimmed ('  android  ' -> 'android'). outputReference was not supplied, so the key MUST NOT exist on the event at all — asserted by the '<absent>' placeholder (a present-with-null or present-with-empty-string key fails). A null appVersion needs no warning and no special handling: /inspector/v2/track accepts the event and records it as 'unversioned'."
+  },
+  {
+    "fixture_id": "wire-11",
+    "description": "outputReference and per-event appVersion set without originHint: both trimmed, appVersion overrides the constructor version, originHint is absent",
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0",
+      "appName": "TestApp"
+    },
+    "operation": "trackSchemaFromEvent",
+    "input": {
+      "eventName": "purchase",
+      "eventProperties": {
+        "plan": "pro",
+        "seats": 3
+      },
+      "streamId": "stream-gw",
+      "options": {
+        "outputReference": " meta-x7k2q ",
+        "originAppVersion": " 4.2.0 "
+      }
+    },
+    "mock_response": {
+      "status": 200,
+      "body": {
+        "samplingRate": 1.0
+      }
+    },
+    "expected_request_body": [
+      {
+        "apiKey": "test-key",
+        "appName": "TestApp",
+        "appVersion": "4.2.0",
+        "libVersion": "<semver>",
+        "env": "dev",
+        "libPlatform": "<sdk-platform>",
+        "messageId": "<uuid-v4>",
+        "streamId": "stream-gw",
+        "createdAt": "<iso8601>",
+        "samplingRate": 1.0,
+        "type": "event",
+        "eventName": "purchase",
+        "outputReference": "meta-x7k2q",
+        "originHint": "<absent>",
+        "eventProperties": [
+          {
+            "propertyName": "plan",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "seats",
+            "propertyType": "int"
+          }
+        ]
+      }
+    ],
+    "expected_promise_outcome": "resolve",
+    "notes": "SPEC.md §7.3.6 row 3 (originHint absent + appVersion provided): the per-event value overrides the constructor version. Both values are trimmed before sending. originHint was not supplied, so its key MUST NOT exist ('<absent>')."
+  },
+  {
+    "fixture_id": "wire-12",
+    "description": "Empty and whitespace-only options are treated as absent: neither gateway key is sent, appVersion falls back to the constructor version — body identical to the no-options shape",
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0",
+      "appName": "TestApp"
+    },
+    "operation": "trackSchemaFromEvent",
+    "input": {
+      "eventName": "purchase",
+      "eventProperties": {
+        "plan": "pro",
+        "seats": 3
+      },
+      "streamId": "stream-gw",
+      "options": {
+        "outputReference": "   ",
+        "originHint": "",
+        "originAppVersion": "  "
+      }
+    },
+    "mock_response": {
+      "status": 200,
+      "body": {
+        "samplingRate": 1.0
+      }
+    },
+    "expected_request_body": [
+      {
+        "apiKey": "test-key",
+        "appName": "TestApp",
+        "appVersion": "1.0.0",
+        "libVersion": "<semver>",
+        "env": "dev",
+        "libPlatform": "<sdk-platform>",
+        "messageId": "<uuid-v4>",
+        "streamId": "stream-gw",
+        "createdAt": "<iso8601>",
+        "samplingRate": 1.0,
+        "type": "event",
+        "eventName": "purchase",
+        "outputReference": "<absent>",
+        "originHint": "<absent>",
+        "eventProperties": [
+          {
+            "propertyName": "plan",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "seats",
+            "propertyType": "int"
+          }
+        ]
+      }
+    ],
+    "expected_promise_outcome": "resolve",
+    "notes": "SPEC.md §7.3.6 row 4 and the omission rule: after trimming, every option value is empty, so each is absent — outputReference and originHint MUST NOT be present as keys (never null, never ''), and appVersion is the constructor's '1.0.0'. The resulting body has exactly the same key set as a call made without options (compare wire-1), which is the backward-compatibility guarantee of SPEC.md §4.2.1."
+  },
+  {
+    "fixture_id": "wire-13",
+    "description": "Property-name collision: event properties literally named outputReference / originHint / appVersion stay in the schema; the top-level gateway fields come only from options",
+    "constructor": {
+      "apiKey": "test-key",
+      "env": "dev",
+      "version": "1.0.0",
+      "appName": "TestApp"
+    },
+    "operation": "trackSchemaFromEvent",
+    "input": {
+      "eventName": "purchase",
+      "eventProperties": {
+        "outputReference": "in-schema",
+        "originHint": 7,
+        "appVersion": true,
+        "plan": "pro"
+      },
+      "streamId": "stream-gw",
+      "options": {
+        "outputReference": "meta-x7k2q",
+        "originHint": "web"
+      }
+    },
+    "mock_response": {
+      "status": 200,
+      "body": {
+        "samplingRate": 1.0
+      }
+    },
+    "expected_request_body": [
+      {
+        "apiKey": "test-key",
+        "appName": "TestApp",
+        "appVersion": null,
+        "libVersion": "<semver>",
+        "env": "dev",
+        "libPlatform": "<sdk-platform>",
+        "messageId": "<uuid-v4>",
+        "streamId": "stream-gw",
+        "createdAt": "<iso8601>",
+        "samplingRate": 1.0,
+        "type": "event",
+        "eventName": "purchase",
+        "outputReference": "meta-x7k2q",
+        "originHint": "web",
+        "eventProperties": [
+          {
+            "propertyName": "outputReference",
+            "propertyType": "string"
+          },
+          {
+            "propertyName": "originHint",
+            "propertyType": "int"
+          },
+          {
+            "propertyName": "appVersion",
+            "propertyType": "boolean"
+          },
+          {
+            "propertyName": "plan",
+            "propertyType": "string"
+          }
+        ]
+      }
+    ],
+    "expected_promise_outcome": "resolve",
+    "notes": "SPEC.md §7.3.6: options MUST NOT touch extractSchema and the schema MUST NOT populate the gateway fields. The four event properties (including the ones that happen to share a name with the gateway fields) appear in eventProperties with their extracted types in input order, while the top-level outputReference / originHint carry the options values and appVersion is null (originHint set, no per-event override — the boolean 'appVersion' property is a property, not a version)."
   }
 ]

@@ -17,7 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="AvoInspector" Version="1.0.0" />
+    <ProjectReference Include="..\..\src\AvoInspector\AvoInspector.csproj" />
   </ItemGroup>
 
   <!-- Reuse the harness's JSON->native interop so fixture tests exercise the same materialization. -->
