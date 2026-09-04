@@ -130,7 +130,7 @@ combination:
 |---|---|
 | `OutputReference` | Which gateway output (destination checkpoint) this observation was bound for. Leave `null` for a gateway-level observation not tied to one output. |
 | `OriginHint` | Identifies the event's upstream source (e.g. `"web"`, `"ios"`, `"android"`). See "Origin hint" below. |
-| `AppVersion` | Per-event app version override — see "Origin hint" below for how it interacts with `OriginHint`. |
+| `AppVersion` | App version **of the source named by `OriginHint`**, not of this SDK instance — a per-event override. See "Origin hint" below for how the two interact. |
 
 All three values are trimmed before sending; empty or whitespace-only values are treated
 as absent, and `OutputReference`/`OriginHint` are then omitted from the wire body
