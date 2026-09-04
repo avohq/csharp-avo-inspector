@@ -112,7 +112,21 @@ namespace Avo.Inspector
             bool? disableBatchTimer)
         {
             // SPEC.md §4.1 — validate apiKey, then version (exact messages). Whitespace-only is empty.
-            if (string.IsNullOrWhiteSpace(apiKey))
+            //
+            // Trim the key first and store only the trimmed value. An Inspector API key is a token,
+            // so surrounding whitespace is never significant and trimming cannot make a working key
+            // stop working. What it does fix is the commonest way this goes wrong: a key pasted with
+            // a trailing newline. Without the trim that key would fail the §7.2 header guard on
+            // every send, which in a batching sender that never throws at the caller means
+            // SendStatus.Error for the life of the process — silent in prod, where logging is off by
+            // default. Trimming costs no security: an embedded CR, LF or NUL survives Trim and is
+            // still rejected before the wire.
+            //
+            // Trimming once here rather than at each use also keeps the header copy and the body
+            // copy of apiKey byte-identical, which the conformance runner asserts. Whitespace-only
+            // still throws, because Trim leaves it empty and IsNullOrWhiteSpace still catches it.
+            var trimmedApiKey = apiKey?.Trim();
+            if (string.IsNullOrWhiteSpace(trimmedApiKey))
             {
                 throw new ArgumentException(NoApiKeyMessage);
             }
@@ -123,8 +137,11 @@ namespace Avo.Inspector
 
             // SPEC.md §7.2 sends the apiKey as a request header, where a CR, LF or NUL would let the
             // value inject outbound header content; InspectorHttpSender rejects any such batch before
-            // it reaches the wire. Warn here as well so the mistake surfaces once at configuration
-            // time instead of only as events that silently never arrive.
+            // it reaches the wire. The trim above has already repaired the accidental case, so what
+            // reaches here is a control character embedded inside the key, which no paste explains
+            // and which the sender will drop on every send. Warn once at configuration time rather
+            // than leaving that as events that silently never arrive — the warning is unconditional,
+            // unlike the sender's shouldLog-gated error, so it is visible in prod too.
             //
             // Deliberately a warning and not a throw. §4.1's table is exhaustive about which inputs
             // are fatal and with which exact message — it even requires an invalid env to fall back
@@ -132,7 +149,7 @@ namespace Avo.Inspector
             // and would turn a malformed key into a process-killing startup failure rather than lost
             // analytics. The sender keeps the wire safe either way; this line is purely diagnostic,
             // and calls the sender's own predicate so the two can never disagree.
-            if (!InspectorHttpSender.IsSafeHeaderValue(apiKey))
+            if (!InspectorHttpSender.IsSafeHeaderValue(trimmedApiKey))
             {
                 // SPEC.md §7.5.1 — name the fault, never echo the key.
                 Logger.Warn("apiKey contains CR, LF or NUL; it cannot be sent as a request header, "
@@ -146,7 +163,7 @@ namespace Avo.Inspector
                 env = AvoInspectorEnv.Dev;
             }
 
-            _apiKey = apiKey!;
+            _apiKey = trimmedApiKey!;
             _appVersion = version!;
             _appName = appName ?? string.Empty;
             _env = env;

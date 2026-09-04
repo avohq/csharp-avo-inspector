@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -132,6 +133,70 @@ namespace Avo.Inspector.Tests
             Assert.Equal(SendStatus.Error, result.Status);
             Assert.Null(result.NewSamplingRate);
             Assert.Equal(0, server.RequestCount); // rejected before the connection, not by the server
+        }
+
+        /// <summary>
+        /// A key pasted with surrounding whitespace — a trailing newline is the classic one — is
+        /// repaired, not rejected. The constructor trims once and stores only the trimmed value, so
+        /// the <c>api-key</c> header and the body's <c>apiKey</c> copy carry the identical trimmed
+        /// token; the conformance runner asserts that agreement. Without the trim this key would
+        /// fail the header guard on every send, which in a sender that never throws at the caller
+        /// means losing all telemetry for the life of the process — silent in prod, where logging is
+        /// off by default. Trimming costs no security: the embedded-control-character cases above
+        /// survive <c>Trim</c> and are still rejected.
+        /// </summary>
+        [Theory]
+        [InlineData("  my-inspector-key  ")]
+        [InlineData("my-inspector-key\n")]
+        [InlineData("my-inspector-key\r\n")]
+        [InlineData("\tmy-inspector-key\t")]
+        public async Task ApiKey_with_surrounding_whitespace_is_trimmed_in_both_header_and_body(string key)
+        {
+            using var server = new TestInspectorServer();
+            using (new MockEndpointScope(server.BaseUrl))
+            {
+                var inspector = new AvoInspector(key, "staging", "1.0.0", batchSize: 1);
+                await inspector.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1");
+                await inspector.Flush();
+
+                var request = Assert.Single(server.Requests); // it sends, rather than failing closed
+                Assert.Equal("my-inspector-key", request.Header("api-key"));
+
+                using var doc = JsonDocument.Parse(request.Body);
+                Assert.Equal("my-inspector-key", doc.RootElement[0].GetProperty("apiKey").GetString());
+            }
+        }
+
+        /// <summary>
+        /// Trimming does not weaken the guard: whitespace around an embedded CRLF is removed, the
+        /// CRLF is not, and the send still fails closed with nothing transmitted.
+        /// </summary>
+        [Fact]
+        public async Task Trimming_does_not_rescue_a_key_with_an_embedded_control_character()
+        {
+            using var server = new TestInspectorServer();
+            using (new MockEndpointScope(server.BaseUrl))
+            {
+                var inspector = new AvoInspector("  key\r\nX-Injected: 1  ", "staging", "1.0.0", batchSize: 1);
+                await inspector.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1");
+                await inspector.Flush();
+
+                Assert.Equal(0, server.RequestCount);
+            }
+        }
+
+        /// <summary>
+        /// SPEC.md §4.1 is unaffected by the trim: a whitespace-only key is still empty after
+        /// trimming, so it still throws with the exact spec message.
+        /// </summary>
+        [Theory]
+        [InlineData("   ")]
+        [InlineData("\r\n")]
+        [InlineData("\t")]
+        public void Whitespace_only_apiKey_still_throws_the_exact_spec_message(string key)
+        {
+            var ex = Assert.Throws<ArgumentException>(() => new AvoInspector(key, "staging", "1.0.0"));
+            Assert.Equal("[Avo Inspector] No API key provided. Inspector can't operate without API key.", ex.Message);
         }
 
         /// <summary>
