@@ -438,10 +438,86 @@ Releases are automated by [`.github/workflows/publish.yml`](./.github/workflows/
 3. The workflow verifies the tag matches `<Version>`, runs the tests, and pushes the
    `.nupkg` + `.snupkg` (symbols) to nuget.org.
 
-**One-time setup:** add a repo secret `NUGET_API_KEY` (nuget.org → Account → API Keys).
-The package ships the README, XML docs (IntelliSense), and SourceLink symbols, so consumers
-can step into the SDK's source while debugging. To build a package locally:
-`dotnet pack src/AvoInspector/AvoInspector.csproj -c Release -o artifacts`.
+No API-key secret is involved: the workflow authenticates to nuget.org over OIDC
+(`NuGet/login@v1` as the `avo.cado` account, which needs `id-token: write` — already set in the
+workflow). The package ships the README, XML docs (IntelliSense), and SourceLink symbols, so
+consumers can step into the SDK's source while debugging.
+
+### Publishing manually (fallback)
+
+Use this only when the tag workflow cannot run — GitHub Actions is down or disabled, the OIDC
+login fails, or you need to publish from a branch. **Prefer the tag flow above**: a local
+`dotnet pack` does not set `ContinuousIntegrationBuild` (the `.csproj` gates it on
+`GITHUB_ACTIONS`), so the package you build by hand is not the deterministic, reproducible one
+CI produces and its SourceLink metadata may point at local paths.
+
+You need push rights on the [`AvoInspector`](https://www.nuget.org/packages/AvoInspector)
+package, and an API key from nuget.org → **Account → API Keys** → *Create* — scope it to
+**Push** for the `AvoInspector` package only. The key is shown once; store it in your password
+manager, not in the repo.
+
+1. **Pre-flight.** On the commit you intend to ship:
+
+   ```sh
+   dotnet test tests/AvoInspector.Tests/AvoInspector.Tests.csproj -c Release
+   ./scripts/run-conformance.sh          # see SPEC_REF in the script header
+   ```
+
+2. **Bump the version in both files** — `<Version>` in `src/AvoInspector/AvoInspector.csproj`
+   and `InspectorVersion.LibVersion`. They are two files by spec necessity (SPEC.md §7.3.3
+   requires a hardcoded constant), and `VersionTests` fails if they disagree, which is what stops
+   a package shipping a stale `libVersion` on the wire. Add the `CHANGELOG.md` entry now, while
+   you still remember what changed.
+
+3. **Pack.**
+
+   ```sh
+   dotnet pack src/AvoInspector/AvoInspector.csproj -c Release -o artifacts
+   ```
+
+   This produces `artifacts/AvoInspector.<version>.nupkg` and a matching `.snupkg`.
+
+4. **Check what you are about to publish** — cheap, and the one step that catches a mis-packed
+   release before it becomes permanent:
+
+   ```sh
+   unzip -l artifacts/AvoInspector.<version>.nupkg
+   ```
+
+   Expect `README.md` at the package root, `lib/netstandard2.0/` **and** `lib/net8.0/`, and an
+   `AvoInspector.xml` next to each `AvoInspector.dll` (that file is what gives consumers
+   IntelliSense).
+
+5. **Push.**
+
+   ```sh
+   dotnet nuget push "artifacts/AvoInspector.<version>.nupkg" \
+     --api-key "$NUGET_API_KEY" \
+     --source https://api.nuget.org/v3/index.json \
+     --skip-duplicate
+   ```
+
+   The `.snupkg` alongside it is pushed automatically — pass `--no-symbols` to suppress that.
+   `--skip-duplicate` turns "this version already exists" into a no-op instead of a failure.
+
+6. **Tag the release** so git and nuget.org agree on what `v<version>` means:
+
+   ```sh
+   git tag v<version> && git push origin v<version>
+   ```
+
+   Pushing the tag **also triggers `publish.yml`**. That is fine and expected: it will pack the
+   same version and its push will no-op on `--skip-duplicate`. Tag only after a successful manual
+   push, so a failed manual attempt does not leave a tag pointing at an unpublished version.
+
+7. **Verify.** The package appears at `https://www.nuget.org/packages/AvoInspector/<version>`;
+   indexing usually takes a few minutes before `dotnet add package AvoInspector --version
+   <version>` resolves it.
+
+> **A published version is permanent.** nuget.org does not allow re-uploading a version, even
+> after deleting it — you can only *unlist* it (which hides it from search while keeping existing
+> restores working). If you ship a broken package, the fix is to bump the patch version and
+> publish again, so double-check step 4 before step 5.
 
 ---
 
