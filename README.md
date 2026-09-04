@@ -385,17 +385,20 @@ change; the runner records request headers itself and asserts them via a fixture
 
 The script builds the harness, fetches the spec repo (which hosts the language-agnostic
 suite-runner + mock server), and runs its fixtures. It defaults to `SPEC_REF=main`, which is
-spec 2.0.0 — 30 fixtures. The gateway track options this SDK implements are spec **2.1.0**,
-still open as avohq spec PR #3, so to run their six fixtures (`wire-9`…`wire-13`, `batch-7`)
-as well:
+spec 2.0.0 — 30 fixtures. The `gateway-track-options` branch carries spec **3.0.0**, the version
+`InspectorVersion.SpecVersion` records: the unified `/inspector/v2/track` endpoint and its three
+required request headers, on top of 2.1.0's gateway track options. It is still an open avohq spec
+PR, so point `SPEC_REF` at it to run the full suite — the six gateway fixtures
+(`wire-9`…`wire-13`, `batch-7`) and the header assertions `wire-1` and `batch-1` now carry:
 
 ```sh
 SPEC_REF=gateway-track-options ./scripts/run-conformance.sh   # 36/36
 ```
 
-Spec **3.0.0** — the unified `/inspector/v2/track` endpoint and its three required request
-headers, the version `InspectorVersion.SpecVersion` now records — is a separate open spec PR.
-Point `SPEC_REF` at its branch once it exists to exercise the header fixtures.
+The header fixtures need no harness change: the suite drives the SDK through
+`AVO_INSPECTOR_MOCK_ENDPOINT`, and the runner records request headers itself and asserts them via
+a fixture's `expected_request_headers`. `wire-1` pins `env: dev` while `batch-1` pins
+`env: staging` on that same header, so an SDK that hardcodes either value fails one of the two.
 
 The vendored fixtures under `conformance/fixtures/` (a snapshot of the spec's `main` suite) also
 back a self-contained `dotnet test` run.

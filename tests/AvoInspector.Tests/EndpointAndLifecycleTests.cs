@@ -91,6 +91,12 @@ namespace Avo.Inspector.Tests
                 await inspector.Flush();
 
                 var request = Assert.Single(server.Requests);
+
+                // The header copies v2 actually reads (SPEC.md §7.2) ...
+                Assert.Equal("my-inspector-key", request.Header("api-key"));
+                Assert.Equal("staging", request.Header("env"));
+
+                // ... and the body copies that survive beside them, same values, same request.
                 using var doc = JsonDocument.Parse(request.Body);
                 var evt = doc.RootElement[0];
                 Assert.Equal("my-inspector-key", evt.GetProperty("apiKey").GetString());

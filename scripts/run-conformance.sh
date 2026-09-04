@@ -13,18 +13,17 @@
 #   SPEC_DIR        local checkout path     (default: <repo>/.spec-repo)
 #   SPEC_REF        branch/tag/sha to check out (default: main)
 #
-# `main` is spec 2.0.0 (30 fixtures). The gateway track options this SDK implements
-# (SPEC.md §4.2.1/§7.3.6) are spec 2.1.0, still open as avohq spec PR #3, so to exercise
-# its six extra fixtures (wire-9…wire-13, batch-7) run:
+# `main` is spec 2.0.0 (30 fixtures). The `gateway-track-options` branch carries spec 3.0.0 —
+# the unified POST /inspector/v2/track endpoint and its REQUIRED api-key / env / X-Avo-Client
+# request headers (SPEC.md §7.1/§7.2), the version this SDK records in
+# InspectorVersion.SpecVersion — on top of 2.1.0's gateway track options (SPEC.md §4.2.1/§7.3.6).
+# It is still an open avohq spec PR, so to run the full suite:
 #
 #   SPEC_REF=gateway-track-options ./scripts/run-conformance.sh   # 36/36
 #
-# Spec 3.0.0 — the unified POST /inspector/v2/track endpoint and its REQUIRED api-key /
-# env / X-Avo-Client request headers (SPEC.md §7.1/§7.2), the version this SDK now records
-# in InspectorVersion.SpecVersion — is a separate open spec PR. Point SPEC_REF at its
-# branch to run the header fixtures. No harness change is needed for them: the suite drives
-# the SDK through AVO_INSPECTOR_MOCK_ENDPOINT, and the runner records request headers itself
-# and asserts them via a fixture's expected_request_headers.
+# No harness change is needed for the headers: the suite drives the SDK through
+# AVO_INSPECTOR_MOCK_ENDPOINT, and the runner records request headers itself and asserts them
+# via a fixture's expected_request_headers — wire-1 and batch-1 pin all three.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -250,7 +250,7 @@ namespace Avo.Inspector
 
         /// <summary>
         /// Gateway-aware overload of <see cref="TrackSchemaFromEvent(string, IDictionary{string, object}, string)"/>
-        /// (SPEC.md §4.2.1 / §7.3.6; AVO-3516 / AVO-3543): identical behavior, plus per-call
+        /// (SPEC.md §4.2.1 / §7.3.6; AVO-3516): identical behavior, plus per-call
         /// <see cref="TrackOptions"/>. SPEC.md §4.2.1 asks languages without optional trailing
         /// parameters to keep the three-parameter signature and add a four-parameter overload, so
         /// both trailing parameters here are required and two- and three-argument calls always bind
@@ -449,7 +449,7 @@ namespace Avo.Inspector
 
         // SPEC.md §7.3.6 normalization: trim, then treat absent/empty/whitespace-only as absent.
         // Same shape as ResolveStreamId, but returns null (omit the wire key) instead of "" and
-        // never logs — used for the gateway coordinate/version fields (AVO-3516/AVO-3543).
+        // never logs — used for the gateway coordinate/version fields (AVO-3516).
         private static string? NormalizeHint(string? value)
         {
             if (string.IsNullOrEmpty(value))

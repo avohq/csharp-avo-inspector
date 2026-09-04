@@ -62,7 +62,7 @@ harness now implements runner contract **v1.1.0**.
   and still omits the argument entirely when a fixture has no `options` — runner contract 1.1.0.
   `scripts/run-conformance.sh` now defaults `SPEC_REF` to `main` (the `require-sessionid-on-wire`
   branch it used to default to has long since merged); `SPEC_REF=gateway-track-options` runs the
-  spec 2.1.0 suite, 36/36. The harness needs no change for the v2 headers: the suite drives the
+  spec 3.0.0 suite, 36/36. The harness needs no change for the v2 headers: the suite drives the
   SDK through `AVO_INSPECTOR_MOCK_ENDPOINT` and the runner records and asserts request headers
   itself.
 - `AvoInspector.Tests` and `AvoInspector.Conformance` now build against
