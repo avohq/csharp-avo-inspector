@@ -486,23 +486,33 @@ namespace Avo.Inspector
                 ? normalizedAppVersion                 // source-scoped: instance version never applies
                 : normalizedAppVersion ?? _appVersion;  // unscoped: override when provided, else fall back
 
-            if (originHint != null && resolvedAppVersion == null &&
-                _shouldLog &&
-                Interlocked.CompareExchange(ref _originHintWithoutAppVersionWarned, 1, 0) == 0)
+            if (originHint != null && resolvedAppVersion == null)
             {
                 // SPEC.md §7.3.6 SHOULDs a one-time warning here: the current v1 backend silently
-                // drops this event (AVO-3543). Gated on the same
-                // process-wide _shouldLog flag every other Logger.Error call in this file already
-                // uses, AND capped at one line for the life of the process via the atomic latch
-                // claim above — unlike ResolveStreamId's ':' warning, this condition can hold on
-                // every call of a healthy, spec-compliant gateway integration. The claim is the
-                // last operand, so it only happens when this branch will actually write; enabling
-                // logging later still yields exactly one signal, and concurrent triggering calls
-                // cannot each win the CompareExchange.
-                // Fixed message string only: never logs OutputReference/OriginHint/AppVersion values.
-                Logger.Error(_shouldLog, "originHint set without a usable AppVersion; this event's " +
-                    "appVersion will be sent as null, which the current v1 backend silently drops " +
-                    "(AVO-3543).");
+                // drops this event (AVO-3543). Gated on the same process-wide _shouldLog flag every
+                // other Logger.Error call in this file already uses, AND capped at one line for the
+                // life of the process via the atomic latch claim below — unlike ResolveStreamId's
+                // ':' warning, this condition can hold on every call of a healthy, spec-compliant
+                // gateway integration.
+                //
+                // _shouldLog is static volatile and every constructor writes it (Dev => true), as
+                // does EnableLogging. So it is read exactly ONCE here and the snapshot drives both
+                // the claim and the write: reading it a second time at the Logger.Error call would
+                // let a concurrent non-Dev constructor or EnableLogging(false) land in between and
+                // turn a successful claim into a silent no-op, burning the one-shot latch so that
+                // no later call could ever emit the warning. Claiming last still keeps the latch
+                // untouched while logging is off, and concurrent triggering calls cannot each win
+                // the CompareExchange.
+                var shouldLogWarning = _shouldLog;
+                if (shouldLogWarning &&
+                    Interlocked.CompareExchange(ref _originHintWithoutAppVersionWarned, 1, 0) == 0)
+                {
+                    // Fixed message string only: never logs OutputReference/OriginHint/AppVersion
+                    // values (SPEC.md §7.3.6 MUST).
+                    Logger.Error(shouldLogWarning, "originHint set without a usable AppVersion; " +
+                        "this event's appVersion will be sent as null, which the current v1 backend " +
+                        "silently drops (AVO-3543).");
+                }
             }
 
             return new WireEvent

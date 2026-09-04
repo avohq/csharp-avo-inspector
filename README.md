@@ -356,7 +356,7 @@ a `Prod` instance ignores it unconditionally, so production traffic can never be
 > `sessionId: ""` is necessary and sufficient to ingest. Server SDKs do not model end-user
 > sessions, so the value is always the empty string. `trackingId`/`visitorId`/`userId` remain
 > absent, as §3.3 requires.
-
+>
 > **Gateway fields (SPEC.md §7.3.6).** Since 1.1.0 an event may also carry two optional top-level
 > siblings of `eventProperties` — `outputReference` and `originHint` — and `appVersion` may be a
 > literal JSON `null` when `originHint` is set without a per-event app version. Both keys are
