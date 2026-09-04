@@ -372,9 +372,11 @@ always performed outside the lock.
 ## Conformance
 
 This SDK ships a thin CLI harness (`AvoInspector.Conformance`) implementing version **1.1.0** of the
-[runner contract](https://github.com/avohq/spec-first-inspector-server-sdk/blob/main/conformance/runner-contract.md)
+[runner contract](https://github.com/avohq/spec-first-inspector-server-sdk/blob/gateway-track-options/conformance/runner-contract.md)
 — it forwards a fixture's `options` object verbatim to the four-parameter overload, and omits the
-argument entirely when the fixture has none. The suite drives the SDK through
+argument entirely when the fixture has none. That link points at the `gateway-track-options` branch
+on purpose: 1.1.0 is part of the same open spec PR as spec 3.0.0, so it has no released URL yet, and
+`main` still documents 1.0.0. The suite drives the SDK through
 `AVO_INSPECTOR_MOCK_ENDPOINT`, so the endpoint move to `/inspector/v2/track` needs no harness
 change; the runner records request headers itself and asserts them via a fixture's
 `expected_request_headers`. To run the official suite:

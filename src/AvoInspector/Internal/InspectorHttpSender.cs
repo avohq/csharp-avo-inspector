@@ -76,6 +76,29 @@ namespace Avo.Inspector.Internal
             bool shouldLog,
             CancellationToken abortToken = default)
         {
+            // Header-injection guard. SPEC.md §7.2 sends the apiKey as a request header, and a value
+            // carrying CR, LF or NUL can terminate the header line and inject content into the
+            // outbound request. The headers below are set with TryAddWithoutValidation, which by
+            // definition skips the checks that would have rejected exactly that. There is no
+            // transport backstop to fall back on: measured on net8.0 with this guard removed,
+            // SocketsHttpHandler writes such a value through unaltered and the receiving server
+            // parses the injected text as a genuine extra header — an apiKey of
+            // "key\r\nX-Injected: 1" arrives as `api-key: key` plus `X-Injected: 1`. Reject here
+            // instead, before serializing or opening a connection, so the failure is contained and
+            // observable rather than transmitted.
+            //
+            // apiKey is the only one of the three header values whose content a caller supplies.
+            // env is AvoInspectorEnv.ToWireString(), always one of the literals "dev"/"staging"/
+            // "prod"; X-Avo-Client is the InspectorVersion.LibPlatform compile-time constant. Neither
+            // can carry a control character, so neither is re-checked. Any header added later whose
+            // value is not a constant needs this same guard.
+            if (!IsSafeHeaderValue(apiKey))
+            {
+                // SPEC.md §7.5.1 — never log the apiKey, so name the fault without echoing the value.
+                Logger.Error(shouldLog, "send failed (apiKey contains CR, LF or NUL and cannot be sent as a header)");
+                return new SendResult(SendStatus.Error, null);
+            }
+
             byte[] rawBytes;
             try
             {
@@ -124,10 +147,10 @@ namespace Avo.Inspector.Internal
                     // sender. X-Avo-Client carries this SDK's libPlatform, so the token is "csharp".
                     //
                     // TryAddWithoutValidation rather than Add: Add throws FormatException on a
-                    // pathological apiKey, and that would escape SendAsync's "never throws"
-                    // contract from outside the try below. Skipping the up-front validation is
-                    // safe — the HTTP stack still rejects a header value containing CR/LF when it
-                    // writes the request, and that throw lands in the catch below as SendStatus.Error.
+                    // pathological apiKey, and that would escape SendAsync's "never throws" contract
+                    // from outside the try below. Nothing is lost by skipping its validation — the
+                    // guard at the top of this method has already rejected the only value that could
+                    // have failed it, and did so without transmitting.
                     request.Headers.TryAddWithoutValidation("api-key", apiKey);
                     request.Headers.TryAddWithoutValidation("env", env);
                     request.Headers.TryAddWithoutValidation("X-Avo-Client", InspectorVersion.LibPlatform);
@@ -162,6 +185,29 @@ namespace Avo.Inspector.Internal
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// True when <paramref name="value"/> is safe to write as an HTTP header value — that is,
+        /// it carries no CR, LF or NUL, the characters that could terminate the header line and
+        /// inject request content. Shared with the constructor's configuration-time warning so the
+        /// two agree by construction; this method is the invariant that actually guards the wire.
+        /// </summary>
+        internal static bool IsSafeHeaderValue(string? value)
+        {
+            if (value == null)
+            {
+                return false;
+            }
+            for (var i = 0; i < value.Length; i++)
+            {
+                var c = value[i];
+                if (c == '\r' || c == '\n' || c == '\0')
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         private static bool TryGzip(byte[] raw, out byte[] compressed)

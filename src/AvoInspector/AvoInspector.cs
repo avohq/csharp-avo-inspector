@@ -121,6 +121,24 @@ namespace Avo.Inspector
                 throw new ArgumentException(NoVersionMessage);
             }
 
+            // SPEC.md §7.2 sends the apiKey as a request header, where a CR, LF or NUL would let the
+            // value inject outbound header content; InspectorHttpSender rejects any such batch before
+            // it reaches the wire. Warn here as well so the mistake surfaces once at configuration
+            // time instead of only as events that silently never arrive.
+            //
+            // Deliberately a warning and not a throw. §4.1's table is exhaustive about which inputs
+            // are fatal and with which exact message — it even requires an invalid env to fall back
+            // rather than throw — so a third, unspecified throw would diverge from the sibling SDKs
+            // and would turn a malformed key into a process-killing startup failure rather than lost
+            // analytics. The sender keeps the wire safe either way; this line is purely diagnostic,
+            // and calls the sender's own predicate so the two can never disagree.
+            if (!InspectorHttpSender.IsSafeHeaderValue(apiKey))
+            {
+                // SPEC.md §7.5.1 — name the fault, never echo the key.
+                Logger.Warn("apiKey contains CR, LF or NUL; it cannot be sent as a request header, "
+                    + "so no events will reach Inspector until the key is corrected.");
+            }
+
             // SPEC.md §4.1 / §6.3 — env fallback to "dev" (never throws).
             if (!AvoInspectorEnvExtensions.TryParse(rawEnv, out var env))
             {

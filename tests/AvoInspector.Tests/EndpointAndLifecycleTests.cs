@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Avo.Inspector.Internal;
 using Xunit;
 
 namespace Avo.Inspector.Tests
@@ -103,6 +104,117 @@ namespace Avo.Inspector.Tests
                 Assert.Equal("staging", evt.GetProperty("env").GetString());
             }
         }
+
+        /// <summary>
+        /// SPEC.md §7.2 carries the apiKey in a request header, so a key holding CR, LF or NUL could
+        /// terminate the header line and inject content into the outbound request. The header is set
+        /// with <c>TryAddWithoutValidation</c>, which by definition does not check, and there is no
+        /// transport backstop: with the guard removed, net8.0 sends all three of these and the server
+        /// parses <c>X-Injected</c> as a real header. The sender MUST therefore reject the batch
+        /// itself — nothing transmitted, <c>SendStatus.Error</c> returned. The vector is specific to
+        /// the v2 header move: in v1 the key travelled only in the JSON body, where it cannot break
+        /// framing.
+        /// </summary>
+        [Theory]
+        [InlineData("key\rX-Injected: 1")]
+        [InlineData("key\nX-Injected: 1")]
+        [InlineData("key\r\nX-Injected: 1")]
+        [InlineData("key\0truncated")]
+        public async Task ApiKey_with_a_control_character_is_rejected_before_any_request(string key)
+        {
+            using var server = new TestInspectorServer();
+
+            var result = await InspectorHttpSender.SendAsync(
+                server.BaseUrl, key, "staging", OneEvent(key), shouldLog: false);
+
+            Assert.Equal(SendStatus.Error, result.Status);
+            Assert.Null(result.NewSamplingRate);
+            Assert.Equal(0, server.RequestCount); // rejected before the connection, not by the server
+        }
+
+        /// <summary>
+        /// The guard rejects only the three characters that can break header framing. A key built
+        /// from other unusual but legal bytes still sends, so the check cannot quietly disable an
+        /// otherwise working SDK.
+        /// </summary>
+        [Fact]
+        public async Task ApiKey_with_unusual_but_legal_characters_still_sends()
+        {
+            const string key = "k3y-with spaces_and.symbols+/=";
+            using var server = new TestInspectorServer();
+
+            var result = await InspectorHttpSender.SendAsync(
+                server.BaseUrl, key, "staging", OneEvent(key), shouldLog: false);
+
+            Assert.Equal(SendStatus.Ok, result.Status);
+            var request = Assert.Single(server.Requests);
+            Assert.Equal(key, request.Header("api-key"));
+        }
+
+        /// <summary>
+        /// End to end. The constructor accepts the key and only warns: SPEC.md §4.1 makes empty and
+        /// whitespace the sole fatal apiKey inputs, and even requires an invalid env to fall back
+        /// rather than throw, so an unspecified third throw would diverge from the sibling SDKs and
+        /// would kill a process over lost analytics. The sender is what holds the wire safe, so the
+        /// event still resolves at enqueue and still never reaches the network.
+        /// </summary>
+        [Fact]
+        public async Task Constructor_accepts_a_crlf_key_and_no_event_reaches_the_wire()
+        {
+            using var server = new TestInspectorServer();
+            using (new MockEndpointScope(server.BaseUrl))
+            {
+                var inspector = new AvoInspector("key\r\nX-Injected: 1", "staging", "1.0.0", batchSize: 1);
+
+                var schema = await inspector.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1");
+
+                Assert.Single(schema); // schema is still returned at enqueue (SPEC.md §4.2)
+                await inspector.Flush();
+                Assert.Equal(0, server.RequestCount);
+            }
+        }
+
+        /// <summary>
+        /// Pins the predicate directly, independent of any transport. Removing the guard and running
+        /// the tests above on net8.0 shows SocketsHttpHandler does not reject these at all: CR and
+        /// CRLF keys are written through and the server sees a genuine injected header, while an LF
+        /// key is folded into one corrupted value. The rejection has to be the SDK's own, so pin it
+        /// where no framework difference can reach it. Empty counts as safe here by design — SPEC.md
+        /// §4.1 already rejects an empty apiKey at construction, so this predicate stays
+        /// single-purpose.
+        /// </summary>
+        [Theory]
+        [InlineData("plain-key", true)]
+        [InlineData("k3y-with spaces_and.symbols+/=", true)]
+        [InlineData("", true)]
+        [InlineData("key\r", false)]
+        [InlineData("key\n", false)]
+        [InlineData("key\r\nX-Injected: 1", false)]
+        [InlineData("key\0truncated", false)]
+        [InlineData(null, false)]
+        public void IsSafeHeaderValue_rejects_only_the_header_framing_characters(string? value, bool expected)
+            => Assert.Equal(expected, InspectorHttpSender.IsSafeHeaderValue(value));
+
+        /// <summary>A minimal well-formed batch; only the apiKey argument matters to these tests.</summary>
+        private static WireEvent[] OneEvent(string apiKey) => new[]
+        {
+            new WireEvent
+            {
+                ApiKey = apiKey,
+                AppName = "TestApp",
+                AppVersion = "1.0.0",
+                LibVersion = InspectorVersion.LibVersion,
+                Env = "staging",
+                LibPlatform = InspectorVersion.LibPlatform,
+                MessageId = "00000000-0000-4000-8000-000000000000",
+                StreamId = "s1",
+                SessionId = string.Empty,
+                CreatedAt = "2026-01-01T00:00:00.000Z",
+                SamplingRate = 1.0,
+                EventName = "E",
+                EventProperties = new List<SchemaEntry>(),
+            },
+        };
 
         [Fact]
         public async Task SamplingRate_zero_drops_event_with_no_http_call()

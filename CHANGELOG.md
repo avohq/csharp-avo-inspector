@@ -26,6 +26,20 @@ harness now implements runner contract **v1.1.0**.
   counts rather than extrapolating. The SDK itself is unchanged — it still reads `samplingRate`
   from the `200` response and still applies its own client-side sampling.
 
+### Security
+
+- **The `api-key` header value is validated before it is sent.** Moving the key out of the JSON
+  body and into a request header introduced a header-injection vector that did not exist in 1.0.0,
+  where the key could not break framing: a key containing CR, LF or NUL can terminate the header
+  line and append attacker-chosen headers to the outbound request. `TryAddWithoutValidation` does
+  not check for this by design, and the transport is not a backstop — on `net8.0` a key of
+  `key\r\nX-Injected: 1` is written through unaltered and the receiving server parses
+  `X-Injected` as a genuine header. The sender now rejects such a key itself, before serializing
+  or opening a connection: the batch fails as an ordinary `SendStatus.Error` and nothing is
+  transmitted. The constructor also warns, so the misconfiguration is visible at startup instead
+  of only as events that never arrive; it does not throw, because SPEC.md §4.1 fixes exactly which
+  constructor inputs are fatal and an invalid `env` is required to fall back rather than throw.
+
 ### Added
 
 - `TrackOptions` — the gateway track options of SPEC.md §4.2.1 / §7.3.6: optional per-call
