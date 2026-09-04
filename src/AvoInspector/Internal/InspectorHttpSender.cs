@@ -190,8 +190,10 @@ namespace Avo.Inspector.Internal
         /// <summary>
         /// True when <paramref name="value"/> is safe to write as an HTTP header value — that is,
         /// it carries no CR, LF or NUL, the characters that could terminate the header line and
-        /// inject request content. Shared with the constructor's configuration-time warning so the
-        /// two agree by construction; this method is the invariant that actually guards the wire.
+        /// inject request content. Shared with the constructor's SPEC.md §4.1 validation so the two
+        /// agree by construction; this method is the invariant that actually guards the wire, and
+        /// still runs for a key that reached the sender without passing through that constructor
+        /// check.
         /// </summary>
         internal static bool IsSafeHeaderValue(string? value)
         {

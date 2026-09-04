@@ -103,10 +103,10 @@ For `--live`, set `AVO_INSPECTOR_API_KEY` (and optionally `AVO_INSPECTOR_ENV=dev
 
 Avo Inspector is moving to a multi-gate model: one Inspector API key per *gateway* (a
 server-side proxy or event bus checkpoint) rather than one Inspector source per
-individual destination. To support that, `TrackSchemaFromEvent` has a **four-parameter
-overload** whose trailing `TrackOptions? options` argument lets a gateway-scoped key tell
-observations taken at different checkpoints, and from different upstream sources, apart
-(SPEC.md §4.2.1; the wire mapping is §7.3.6).
+individual destination. To support that, `TrackSchemaFromEvent` takes three **optional
+trailing parameters** that let a gateway-scoped key tell observations taken at different
+checkpoints, and from different upstream sources, apart (SPEC.md §4.2.1; the wire mapping
+is §7.3.6).
 
 ```csharp
 using Avo.Inspector;
@@ -115,56 +115,57 @@ await inspector.TrackSchemaFromEvent(
     eventName: "Purchase Completed",
     eventProperties: new Dictionary<string, object?> { ["amount"] = 99.0 },
     streamId: "web",
-    options: new TrackOptions
-    {
-        OutputReference = "meta-x7k2q", // which output checkpoint this observation was bound for
-        OriginHint      = "web",        // which upstream source produced the event
-        AppVersion      = "5.1.0",      // that source's app version — optional; see "Origin hint"
-    });
+    outputReference: "meta-x7k2q",  // which output checkpoint this observation was bound for
+    originHint: "web",              // which upstream source produced the event
+    originAppVersion: "5.1.0");     // that source's app version — optional; see "Origin hint"
 ```
 
-`TrackOptions` has three `string?` properties, all optional and independent — set any
-combination:
+All three are `string?`, optional and independent — set any combination, by name:
 
-| Property | Purpose |
+| Parameter | Purpose |
 |---|---|
-| `OutputReference` | Which gateway output (destination checkpoint) this observation was bound for. Leave `null` for a gateway-level observation not tied to one output. |
-| `OriginHint` | Identifies the event's upstream source (e.g. `"web"`, `"ios"`, `"android"`). See "Origin hint" below. |
-| `AppVersion` | App version **of the source named by `OriginHint`**, not of this SDK instance — a per-event override. See "Origin hint" below for how the two interact. |
+| `outputReference` | Which gateway output (destination checkpoint) this observation was bound for. Leave unset for a gateway-level observation not tied to one output. |
+| `originHint` | Identifies the event's upstream source (e.g. `"web"`, `"ios"`, `"android"`). See "Origin hint" below. |
+| `originAppVersion` | App version **of the source named by `originHint`**, not of this SDK instance — a per-event override. See "Origin hint" below for how the two interact. |
+
+They are named parameters rather than an options object because SPEC.md §4.2.1 picks the
+call-site shape from the target language: C# has named arguments, so the three are flattened
+and an IDE surfaces them at the call site. The wire body is identical to the grouped shape
+other SDKs use.
 
 All three values are trimmed before sending; empty or whitespace-only values are treated
-as absent, and `OutputReference`/`OriginHint` are then omitted from the wire body
-entirely rather than sent as `null` or `""` (SPEC.md §7.3.6). The original three-parameter
-overload is retained unchanged (source- and binary-compatible with 1.0.0) and delegates with
-`options: null`; that call, or an empty `new TrackOptions()`, produces a wire body with
-exactly the 1.0.0 key set and values — only `libVersion` differs. In the four-parameter
-overload both `streamId` and `options` are required, so pass `streamId: null` when you
-have no stream id; this keeps two- and three-argument calls binding unambiguously.
+as absent, and `outputReference`/`originHint` are then omitted from the wire body
+entirely rather than sent as `null` or `""` (SPEC.md §7.3.6). Supplying none of them —
+including through the retained three-parameter overload, which stays source- and
+binary-compatible with 1.0.0 — produces a wire body with exactly the 1.0.0 key set and
+values; only `libVersion` differs.
 
 > A customer's own event property literally named `outputReference`, `originHint`, or
 > `appVersion` (with unrelated business meaning) is unaffected — SPEC.md §7.3.6 calls it
 > "an ordinary property". It still appears inside `eventProperties` with its own extracted
-> type, exactly as before, and the top-level fields described here come only from
-> `TrackOptions`, never from event data; neither direction leaks into the other.
+> type, exactly as before, and the top-level fields described here come only from these
+> parameters, never from event data; neither direction leaks into the other.
 
 ### Origin hint
 
-`OriginHint` must be a **low-cardinality** value (e.g. `"web"`, `"ios"`, `"android"`) —
+`originHint` must be a **low-cardinality** value (e.g. `"web"`, `"ios"`, `"android"`) —
 it **MUST NOT** be a user identifier or any other high-cardinality value. This is a
 documentation-only rule; the SDK does not validate it at runtime.
 
-Setting `OriginHint` marks the event as coming from a different source than the app this
-`AvoInspector` instance was constructed with, which changes how `AppVersion` resolves on
-the wire:
+Setting `originHint` marks the event as coming from a different source than the app this
+`AvoInspector` instance was constructed with, which changes how `originAppVersion` resolves
+on the wire. The parameter is named for whose version it carries: `originHint` says which
+source, `originAppVersion` says that source's version. It sets the event's `appVersion` on
+the wire — the wire field keeps its own name.
 
-| `OriginHint` (normalized) | `AppVersion` (normalized) | wire `appVersion` |
+| `originHint` (normalized) | `originAppVersion` (normalized) | wire `appVersion` |
 |---|---|---|
-| set | set (non-blank) | `AppVersion`, trimmed |
+| set | set (non-blank) | `originAppVersion`, trimmed |
 | set | absent/blank | literal JSON `null` |
-| absent | set (non-blank) | `AppVersion`, trimmed |
+| absent | set (non-blank) | `originAppVersion`, trimmed |
 | absent | absent/blank | the constructor `Version` value (unchanged behavior) |
 
-`OriginHint` without an `AppVersion` is an ordinary, fully supported call: the
+`originHint` without an `originAppVersion` is an ordinary, fully supported call: the
 `/inspector/v2/track` endpoint this SDK posts to decodes both gateway coordinates and
 stores a `null` `appVersion` as `"unversioned"`. The SDK logs nothing about it.
 
@@ -223,9 +224,9 @@ The constructor throws synchronously (an `ArgumentException`) for a missing/whit
 `ApiKey` or `Version`. An invalid or absent `env` string **never throws** — it falls
 back to `Dev` with a warning.
 
-### `Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(string eventName, IDictionary<string, object?>? eventProperties, string? streamId = null)`
+### `Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(string eventName, IDictionary<string, object?>? eventProperties, string? streamId)`
 
-### `Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(string eventName, IDictionary<string, object?>? eventProperties, string? streamId, TrackOptions? options)`
+### `Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(string eventName, IDictionary<string, object?>? eventProperties, string? streamId = null, string? outputReference = null, string? originHint = null, string? originAppVersion = null)`
 
 Extracts the event's schema, applies per-event sampling, enqueues it, and dispatches a
 batch when a flush trigger fires. Resolves with the extracted schema **at enqueue time**.
@@ -241,11 +242,16 @@ batch when a flush trigger fires. Resolves with the extracted schema **at enqueu
 `streamId` is passed through verbatim; a value containing `:` is warned about but still
 used unchanged; an absent or empty value becomes `""` on the wire.
 
-`options` carries optional per-call gateway coordinates (`OutputReference`, `OriginHint`)
-and a per-event `AppVersion` override — see "Gateways" above for the full behavior and
-the app-version resolution table. Omitting `options` (or passing an empty
-`new TrackOptions()`) produces a wire body with exactly the 1.0.0 key set and values —
-only `libVersion` differs.
+`outputReference`, `originHint` and `originAppVersion` are the optional per-call gateway
+coordinates — see "Gateways" above for the full behavior and the app-version resolution
+table. Supplying none of them produces a wire body with exactly the 1.0.0 key set and
+values; only `libVersion` differs.
+
+The three-parameter overload is the 1.0.0 signature, kept so precompiled 1.0.0 callers keep
+binding; it delegates to the form above. It declares no default for `streamId` — a default
+there would make a two-argument call ambiguous between the two — which changes nothing for
+callers: a default is call-site metadata, not part of the CLR signature, so a two-argument
+call simply resolves to the form above and produces the identical body.
 
 ### `IReadOnlyList<SchemaEntry> ExtractSchema(IDictionary<string, object?>? eventProperties)`
 
@@ -344,20 +350,20 @@ one body shape — and one JSON Schema — across every Inspector sender.
 `AVO_INSPECTOR_MOCK_ENDPOINT` redirects requests to a test endpoint, but is **fail-closed**:
 a `Prod` instance ignores it unconditionally, so production traffic can never be redirected.
 
-> **`sessionId`.** Every event carries `sessionId: ""`, which
-> [SPEC.md §3.3](https://github.com/avohq/spec-first-inspector-server-sdk/blob/main/SPEC.md)
-> has REQUIRED of server SDKs since spec v2.0.0: the live Inspector ingestion pipeline silently
-> **drops** events that omit it (the request still returns `200 {"success":true}`, yet nothing
-> reaches the dashboard). Verified by field-bisection against the live API: adding only
-> `sessionId: ""` is necessary and sufficient to ingest. Server SDKs do not model end-user
-> sessions, so the value is always the empty string. `trackingId`/`visitorId`/`userId` remain
-> absent, as §3.3 requires.
+> **No `sessionId`.** Spec 3.0.0 removed the field from the wire body
+> ([SPEC.md §3.3](https://github.com/avohq/spec-first-inspector-server-sdk/blob/main/SPEC.md)):
+> a server SDK has no session to report, and `/inspector/v2/track` supplies the value itself.
+> Spec 2.0.0 had REQUIRED it as `""` because ingestion then dropped events whose body omitted
+> it — returning `200 {"success":true}` while nothing reached the dashboard — which is why the
+> field is *removed* rather than *forbidden*: a body that still carries it stays valid. Use
+> `streamId` to correlate events. `trackingId`/`visitorId`/`userId` remain forbidden.
 >
 > **Gateway fields (SPEC.md §7.3.6).** Since 1.1.0 an event may also carry two optional top-level
 > siblings of `eventProperties` — `outputReference` and `originHint` — and `appVersion` may be a
 > literal JSON `null` when `originHint` is set without a per-event app version. Both keys are
-> omitted entirely when not provided, so a call without `TrackOptions` produces a body with exactly
-> the 1.0.0 key set and values — only `libVersion` differs. See [Gateways](#gateways).
+> omitted entirely when not provided, so a call that supplies none of the three coordinates
+> produces a body with exactly the 1.0.0 key set and values — only `libVersion` differs. See
+> [Gateways](#gateways).
 
 ---
 

@@ -32,6 +32,9 @@ namespace Avo.Inspector
         private const string NoVersionMessage =
             "[Avo Inspector] No version provided. Many features of Inspector rely on versioning. " +
             "Please provide comparable string version, i.e. integer or semantic.";
+        private const string ControlCharacterApiKeyMessage =
+            "[Avo Inspector] API key contains a control character. The API key is sent as a " +
+            "request header and cannot contain CR, LF, or NUL.";
 
         // Process-wide logging flag (SPEC.md §4.4). Volatile so a write on one instance is visible
         // to reads on all instances across threads.
@@ -137,25 +140,26 @@ namespace Avo.Inspector
                 throw new ArgumentException(NoVersionMessage);
             }
 
-            // SPEC.md §7.2 sends the apiKey as a request header, where a CR, LF or NUL would let the
-            // value inject outbound header content; InspectorHttpSender rejects any such batch before
-            // it reaches the wire. The trim above has already repaired the accidental case, so what
-            // reaches here is a control character embedded inside the key, which no paste explains
-            // and which the sender will drop on every send. Warn once at configuration time rather
-            // than leaving that as events that silently never arrive — the warning is unconditional,
-            // unlike the sender's shouldLog-gated error, so it is visible in prod too.
+            // SPEC.md §4.1 — a control character in the apiKey is fatal at construction, with the
+            // exact message above. The key is the only caller-supplied value that reaches a request
+            // header (§7.2), and CR, LF or NUL there can terminate the header line and append
+            // attacker-chosen headers to every request the instance makes.
             //
-            // Deliberately a warning and not a throw. §4.1's table is exhaustive about which inputs
-            // are fatal and with which exact message — it even requires an invalid env to fall back
-            // rather than throw — so a third, unspecified throw would diverge from the sibling SDKs
-            // and would turn a malformed key into a process-killing startup failure rather than lost
-            // analytics. The sender keeps the wire safe either way; this line is purely diagnostic,
-            // and calls the sender's own predicate so the two can never disagree.
+            // Ordered after the trim deliberately: the commonest way this goes wrong is a key pasted
+            // with a trailing newline, and Trim repairs exactly that — surrounding whitespace only,
+            // so a control character with content on either side survives it, and NUL survives
+            // anywhere since NUL is not whitespace. A pasted key therefore still works, while a key
+            // that genuinely carries an embedded control character fails loudly here.
+            //
+            // Deliberately redundant with the §7.2 send-time refusal in InspectorHttpSender, which
+            // is what actually protects the wire: on its own that guard turns a configuration
+            // mistake into a process that starts cleanly and delivers nothing (SendStatus.Error on
+            // every send, and logging is off by default outside dev). This throw is for the
+            // developer, the sender's check is for the wire. It calls the sender's own predicate so
+            // the two can never disagree, and names the fault without echoing the key (§7.5.1).
             if (!InspectorHttpSender.IsSafeHeaderValue(trimmedApiKey))
             {
-                // SPEC.md §7.5.1 — name the fault, never echo the key.
-                Logger.Warn("apiKey contains CR, LF or NUL; it cannot be sent as a request header, "
-                    + "so no events will reach Inspector until the key is corrected.");
+                throw new ArgumentException(ControlCharacterApiKeyMessage);
             }
 
             // SPEC.md §4.1 / §6.3 — env fallback to "dev" (never throws).
@@ -274,36 +278,70 @@ namespace Avo.Inspector
         /// </remarks>
         /// <param name="eventName">The tracked event name.</param>
         /// <param name="eventProperties">The event properties to extract a schema from.</param>
-        /// <param name="streamId">Optional stream id; passed through verbatim (SPEC.md §4.2, §8.2).</param>
+        /// <param name="streamId">Stream id or <c>null</c>; passed through verbatim (SPEC.md §4.2, §8.2).</param>
+        /// <remarks>
+        /// <paramref name="streamId"/> carries no default deliberately. The 1.0.0 shipped signature
+        /// declared one, but the §4.2.1 form below also defaults every parameter after
+        /// <paramref name="eventProperties"/>, so leaving it here would make a two-argument call
+        /// ambiguous between the two (CS0121) — C# has no tie-break when both candidates substitute
+        /// defaults. Removing it costs no compatibility: a default is call-site metadata, not part
+        /// of the CLR signature, so precompiled 1.0.0 callers still bind to this method, and a
+        /// two-argument source call now resolves to the form below, which produces the identical
+        /// body.
+        /// </remarks>
         public Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(
             string eventName,
             IDictionary<string, object?>? eventProperties,
-            string? streamId = null)
+            string? streamId)
         {
             // Retained with its exact 1.0.0 CLR signature so precompiled consumers keep binding
             // (no MissingMethodException on upgrade). Pure delegation; no behavior of its own.
-            return TrackSchemaFromEvent(eventName, eventProperties, streamId, null);
+            return TrackSchemaFromEvent(eventName, eventProperties, streamId, null, null, null);
         }
 
         /// <summary>
-        /// Gateway-aware overload of <see cref="TrackSchemaFromEvent(string, IDictionary{string, object}, string)"/>
-        /// (SPEC.md §4.2.1 / §7.3.6; AVO-3516): identical behavior, plus per-call
-        /// <see cref="TrackOptions"/>. SPEC.md §4.2.1 asks languages without optional trailing
-        /// parameters to keep the three-parameter signature and add a four-parameter overload, so
-        /// both trailing parameters here are required and two- and three-argument calls always bind
-        /// unambiguously to the 1.0.0 overload; pass <c>streamId: null</c> when no stream applies.
+        /// Gateway-aware form of
+        /// <see cref="TrackSchemaFromEvent(string, IDictionary{string, object}, string)"/>
+        /// (SPEC.md §4.2.1 / §7.3.6; AVO-3516): identical behavior, plus the three per-call gateway
+        /// coordinates as top-level optional parameters.
         /// </summary>
+        /// <remarks>
+        /// SPEC.md §4.2.1 decides this shape from the target language: C# has named arguments, so
+        /// the coordinates are flattened rather than grouped in an options object — a caller writes
+        /// <c>originAppVersion: "4.2.0"</c> at the call site and an IDE surfaces the names directly.
+        /// The wire body is identical to the grouped shape either way (SPEC.md §7.3.6), so nothing
+        /// about the request depends on this choice.
+        /// <para>The three-parameter overload above keeps its exact 1.0.0 CLR signature, so
+        /// precompiled 1.0.0 consumers keep binding and two- and three-argument source calls
+        /// continue to resolve to it; both forms produce the same body.</para>
+        /// </remarks>
         /// <param name="eventName">The tracked event name.</param>
         /// <param name="eventProperties">The event properties to extract a schema from.</param>
         /// <param name="streamId">Stream id or <c>null</c>; passed through verbatim (SPEC.md §4.2, §8.2).</param>
-        /// <param name="options">Gateway coordinates and per-event app version override
-        /// (<see cref="TrackOptions"/>); <c>null</c> sends the same body as the three-parameter
-        /// overload.</param>
+        /// <param name="outputReference">Reference of the gateway output this observation was bound
+        /// for (e.g. <c>"meta-x7k2q"</c>). <c>null</c> for a gateway-level observation not tied to
+        /// one output. Trimmed; blank is treated as absent and the wire key is omitted entirely,
+        /// never sent as <c>null</c> or <c>""</c> (SPEC.md §7.3.6).</param>
+        /// <param name="originHint">Low-cardinality label identifying the event's upstream source
+        /// (e.g. <c>"web"</c>, <c>"ios"</c>, <c>"android"</c>). <b>MUST NOT</b> be a user identifier
+        /// or any other high-cardinality value — a documentation rule, not validated at runtime.
+        /// Trimmed; blank is treated as absent. Setting it makes the event source-scoped, which
+        /// changes how <paramref name="originAppVersion"/> resolves.</param>
+        /// <param name="originAppVersion">App version of the source named by
+        /// <paramref name="originHint"/> — not of this instance — for this event only. With
+        /// <paramref name="originHint"/> set, this instance's configured version never applies: a
+        /// non-blank value is sent trimmed, a blank or absent one is sent as a literal JSON
+        /// <c>null</c>. Without <paramref name="originHint"/>, a non-blank value overrides the
+        /// configured version and a blank one falls back to it. It sets the event's
+        /// <c>appVersion</c> on the wire — the wire field keeps its own name (SPEC.md §7.3.1,
+        /// §7.3.6).</param>
         public async Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(
             string eventName,
             IDictionary<string, object?>? eventProperties,
-            string? streamId,
-            TrackOptions? options)
+            string? streamId = null,
+            string? outputReference = null,
+            string? originHint = null,
+            string? originAppVersion = null)
         {
             // SPEC.md §4.5 — after destroy(), resolve([]) with no enqueue and no HTTP call.
             lock (_lock)
@@ -332,7 +370,9 @@ namespace Avo.Inspector
                     return eventSchema;
                 }
 
-                var body = BuildWireEvent(eventName, resolvedStreamId, samplingSnapshot, eventSchema, options);
+                var body = BuildWireEvent(
+                    eventName, resolvedStreamId, samplingSnapshot, eventSchema,
+                    outputReference, originHint, originAppVersion);
 
                 List<WireEvent>? batchToSend = null;
                 var dropped = 0;
@@ -502,19 +542,21 @@ namespace Avo.Inspector
             string streamId,
             double samplingSnapshot,
             IReadOnlyList<SchemaEntry> eventSchema,
-            TrackOptions? options)
+            string? rawOutputReference,
+            string? rawOriginHint,
+            string? rawOriginAppVersion)
         {
-            var outputReference = NormalizeHint(options?.OutputReference);
-            var originHint = NormalizeHint(options?.OriginHint);
-            var normalizedAppVersion = NormalizeHint(options?.AppVersion);
+            var outputReference = NormalizeHint(rawOutputReference);
+            var originHint = NormalizeHint(rawOriginHint);
+            var normalizedAppVersion = NormalizeHint(rawOriginAppVersion);
 
-            // App version resolution — SPEC.md §7.3.6's appVersion table, restated in
-            // TrackOptions.AppVersion's XML doc.
+            // App version resolution — SPEC.md §7.3.6's appVersion table, restated in the
+            // originAppVersion parameter's XML doc.
             var resolvedAppVersion = originHint != null
                 ? normalizedAppVersion                 // source-scoped: instance version never applies
                 : normalizedAppVersion ?? _appVersion;  // unscoped: override when provided, else fall back
 
-            // No warning is emitted for originHint-without-AppVersion. It is a normal, fully
+            // No warning is emitted for originHint-without-originAppVersion. It is a normal, fully
             // supported call: /inspector/v2/track decodes both gateway coordinates and stores a
             // null appVersion as "unversioned". The one-shot stderr warning this SDK carried
             // before existed only because /inspector/v1/track discarded the coordinates and

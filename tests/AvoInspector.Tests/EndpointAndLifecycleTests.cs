@@ -170,24 +170,23 @@ namespace Avo.Inspector.Tests
         /// <summary>
         /// Trimming does not weaken the guard. <c>Trim</c> strips only surrounding whitespace, so a
         /// control character with content on both sides survives it, and NUL survives even in
-        /// trailing position because NUL is not whitespace. Both still fail closed with nothing
-        /// transmitted — which is what keeps the earlier repair from being a hole.
+        /// trailing position because NUL is not whitespace. What survives is fatal: SPEC.md §4.1
+        /// requires the constructor to throw with its exact message, so the mistake is caught at
+        /// configuration time rather than becoming events that never arrive.
         /// </summary>
         [Theory]
         [InlineData("  key\r\nX-Injected: 1  ")] // embedded CRLF, whitespace stripped from around it
         [InlineData("  key\0truncated  ")]       // embedded NUL
         [InlineData("  key\0  ")]                // trailing NUL: not whitespace, so Trim leaves it
-        public async Task Trimming_does_not_rescue_a_key_whose_control_character_survives_it(string key)
+        public void Trimming_does_not_rescue_a_key_whose_control_character_survives_it(string key)
         {
-            using var server = new TestInspectorServer();
-            using (new MockEndpointScope(server.BaseUrl))
-            {
-                var inspector = new AvoInspector(key, "staging", "1.0.0", batchSize: 1);
-                await inspector.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1");
-                await inspector.Flush();
+            var ex = Assert.Throws<ArgumentException>(
+                () => new AvoInspector(key, "staging", "1.0.0", batchSize: 1));
 
-                Assert.Equal(0, server.RequestCount);
-            }
+            Assert.Equal(
+                "[Avo Inspector] API key contains a control character. The API key is sent as a "
+                + "request header and cannot contain CR, LF, or NUL.",
+                ex.Message);
         }
 
         /// <summary>
@@ -224,26 +223,40 @@ namespace Avo.Inspector.Tests
         }
 
         /// <summary>
-        /// End to end. The constructor accepts the key and only warns: SPEC.md §4.1 makes empty and
-        /// whitespace the sole fatal apiKey inputs, and even requires an invalid env to fall back
-        /// rather than throw, so an unspecified third throw would diverge from the sibling SDKs and
-        /// would kill a process over lost analytics. The sender is what holds the wire safe, so the
-        /// event still resolves at enqueue and still never reaches the network.
+        /// The two §4.1 apiKey rejections are distinct and each keeps its own exact message, so a
+        /// caller reading the exception learns which mistake they made. Ordering matters: emptiness
+        /// is judged after the trim, so a whitespace-only key is "no API key" and never reaches the
+        /// control-character check.
         /// </summary>
         [Fact]
-        public async Task Constructor_accepts_a_crlf_key_and_no_event_reaches_the_wire()
+        public void The_two_apiKey_rejections_keep_distinct_exact_messages()
         {
+            var empty = Assert.Throws<ArgumentException>(() => new AvoInspector("  ", "staging", "1.0.0"));
+            var control = Assert.Throws<ArgumentException>(() => new AvoInspector("k\r\nX: 1", "staging", "1.0.0"));
+
+            Assert.Equal("[Avo Inspector] No API key provided. Inspector can't operate without API key.", empty.Message);
+            Assert.StartsWith("[Avo Inspector] API key contains a control character.", control.Message);
+            Assert.NotEqual(empty.Message, control.Message);
+        }
+
+        /// <summary>
+        /// The §7.2 send-time refusal is deliberately redundant with the §4.1 constructor throw and
+        /// is what actually guards the wire, so it is pinned directly on the sender — the only way
+        /// in now that the constructor rejects such a key outright. Nothing is transmitted: measured
+        /// on net8.0, removing this guard lets SocketsHttpHandler write the value through and the
+        /// server parses the injected text as a genuine header.
+        /// </summary>
+        [Fact]
+        public async Task Sender_refuses_a_crlf_key_and_nothing_reaches_the_wire()
+        {
+            const string key = "key\r\nX-Injected: 1";
             using var server = new TestInspectorServer();
-            using (new MockEndpointScope(server.BaseUrl))
-            {
-                var inspector = new AvoInspector("key\r\nX-Injected: 1", "staging", "1.0.0", batchSize: 1);
 
-                var schema = await inspector.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1");
+            var result = await InspectorHttpSender.SendAsync(
+                server.BaseUrl, key, "staging", OneEvent(key), shouldLog: false);
 
-                Assert.Single(schema); // schema is still returned at enqueue (SPEC.md §4.2)
-                await inspector.Flush();
-                Assert.Equal(0, server.RequestCount);
-            }
+            Assert.Equal(SendStatus.Error, result.Status);
+            Assert.Equal(0, server.RequestCount);
         }
 
         /// <summary>
@@ -280,7 +293,6 @@ namespace Avo.Inspector.Tests
                 LibPlatform = InspectorVersion.LibPlatform,
                 MessageId = "00000000-0000-4000-8000-000000000000",
                 StreamId = "s1",
-                SessionId = string.Empty,
                 CreatedAt = "2026-01-01T00:00:00.000Z",
                 SamplingRate = 1.0,
                 EventName = "E",

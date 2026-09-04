@@ -11,8 +11,8 @@ using Xunit;
 namespace Avo.Inspector.Tests
 {
     /// <summary>
-    /// Wire-shape and behavior matrix for <see cref="TrackOptions"/> / the fourth
-    /// <c>TrackSchemaFromEvent</c> parameter (AVO-3516), per SPEC.md §4.2.1 and §7.3.6
+    /// Wire-shape and behavior matrix for the three gateway coordinate parameters of
+    /// <c>TrackSchemaFromEvent</c> (AVO-3516), per SPEC.md §4.2.1 and §7.3.6
     /// (the normalization rules, the <c>appVersion</c> resolution table, and the omission and
     /// property-name-collision rules), and mirroring conformance fixtures <c>wire-9</c> -
     /// <c>wire-13</c> and <c>batch-7</c>.
@@ -20,7 +20,7 @@ namespace Avo.Inspector.Tests
     /// <remarks>
     /// Every wire-shape test in this file constructs its instance with env <c>"staging"</c> (never
     /// <c>"dev"</c>), so <c>_shouldLog</c> — a process-wide flag — stays off for the whole matrix.
-    /// The one test that turns logging on, <c>OriginHint_without_usable_AppVersion_is_silent_on_v2</c>,
+    /// The one test that turns logging on, <c>OriginHint_without_usable_OriginAppVersion_is_silent_on_v2</c>,
     /// restores it before returning.
     /// </remarks>
     public class TrackOptionsTests
@@ -28,7 +28,7 @@ namespace Avo.Inspector.Tests
         private static readonly string[] V100Keys =
         {
             "apiKey", "appName", "appVersion", "libVersion", "env", "libPlatform", "messageId",
-            "streamId", "sessionId", "createdAt", "samplingRate", "type", "eventName", "eventProperties"
+            "streamId", "createdAt", "samplingRate", "type", "eventName", "eventProperties"
         };
 
         private static JsonElement FirstEvent(TestInspectorServer server, int requestIndex = 0)
@@ -66,7 +66,8 @@ namespace Avo.Inspector.Tests
                 var inspector = new AvoInspector("k", "staging", "1.4.2", batchSize: 1);
 
                 await inspector.TrackSchemaFromEvent(
-                    "Purchase Completed", Props.Of(("amount", 9.99)), "s1", options: null);
+                    "Purchase Completed", Props.Of(("amount", 9.99)), "s1",
+                    outputReference: null, originHint: null, originAppVersion: null);
 
                 Assert.Equal(1, server.RequestCount);
                 var evt = FirstEvent(server);
@@ -79,7 +80,7 @@ namespace Avo.Inspector.Tests
         }
 
         [Fact]
-        public async Task Empty_TrackOptions_produces_1_0_0_body_exactly()
+        public async Task All_three_coordinates_null_produces_1_0_0_body_exactly()
         {
             using var server = new TestInspectorServer();
             using (new MockEndpointScope(server.BaseUrl))
@@ -87,7 +88,8 @@ namespace Avo.Inspector.Tests
                 var inspector = new AvoInspector("k", "staging", "1.4.2", batchSize: 1);
 
                 await inspector.TrackSchemaFromEvent(
-                    "Purchase Completed", Props.Of(("amount", 9.99)), "s1", new TrackOptions());
+                    "Purchase Completed", Props.Of(("amount", 9.99)), "s1",
+                    outputReference: null, originHint: null, originAppVersion: null);
 
                 Assert.Equal(1, server.RequestCount);
                 var evt = FirstEvent(server);
@@ -133,7 +135,7 @@ namespace Avo.Inspector.Tests
                 var inspector = new AvoInspector("k", "staging", "1.0.0", batchSize: 1);
 
                 await inspector.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1",
-                    new TrackOptions { OutputReference = outputReference });
+                    outputReference: outputReference);
 
                 var evt = FirstEvent(server);
                 Assert.False(evt.TryGetProperty("outputReference", out _));
@@ -149,7 +151,7 @@ namespace Avo.Inspector.Tests
                 var inspector = new AvoInspector("k", "staging", "1.0.0", batchSize: 1);
 
                 await inspector.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1",
-                    new TrackOptions { OutputReference = "  meta-x7k2q  " });
+                    outputReference: "  meta-x7k2q  ");
 
                 var evt = FirstEvent(server);
                 Assert.Equal("meta-x7k2q", evt.GetProperty("outputReference").GetString());
@@ -168,7 +170,7 @@ namespace Avo.Inspector.Tests
                 var inspector = new AvoInspector("k", "staging", "1.0.0", batchSize: 1);
 
                 await inspector.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1",
-                    new TrackOptions { OriginHint = originHint });
+                    originHint: originHint);
 
                 var evt = FirstEvent(server);
                 Assert.False(evt.TryGetProperty("originHint", out _));
@@ -187,7 +189,7 @@ namespace Avo.Inspector.Tests
                 // originHint-without-AppVersion decision-table row 2 — this test's purpose is
                 // trimming, not the appVersion:null case (that is AppVersion_rule_matrix's job).
                 await inspector.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1",
-                    new TrackOptions { OriginHint = "  web  ", AppVersion = "5.1.0" });
+                    originHint: "  web  ", originAppVersion: "5.1.0");
 
                 var evt = FirstEvent(server);
                 Assert.Equal("web", evt.GetProperty("originHint").GetString());
@@ -214,7 +216,7 @@ namespace Avo.Inspector.Tests
                 var inspector = new AvoInspector("k", "staging", constructorVersion, batchSize: 1);
 
                 await inspector.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1",
-                    new TrackOptions { OriginHint = originHint, AppVersion = appVersion });
+                    originHint: originHint, originAppVersion: appVersion);
 
                 var evt = FirstEvent(server);
                 var wireAppVersion = evt.GetProperty("appVersion");
@@ -250,7 +252,7 @@ namespace Avo.Inspector.Tests
                     "E",
                     Props.Of(("outputReference", "customer-value")),
                     "s1",
-                    new TrackOptions { OutputReference = "meta-x7k2q" });
+                    outputReference: "meta-x7k2q");
 
                 Assert.Single(schema);
                 Assert.Equal("outputReference", schema[0].PropertyName);
@@ -273,7 +275,7 @@ namespace Avo.Inspector.Tests
                     "E",
                     Props.Of(("originHint", "customer-value")),
                     "s1",
-                    new TrackOptions { OriginHint = "web", AppVersion = "5.1.0" });
+                    originHint: "web", originAppVersion: "5.1.0");
 
                 Assert.Single(schema);
                 Assert.Equal("originHint", schema[0].PropertyName);
@@ -289,8 +291,8 @@ namespace Avo.Inspector.Tests
         /// <c>originHint</c>, or <c>appVersion</c> is an ordinary property." Completes the
         /// collision trio (conformance fixture <c>wire-13</c>) for the third name: a property
         /// literally called <c>appVersion</c> stays in the schema with its own extracted type and
-        /// does NOT become the wire's top-level <c>appVersion</c>, which comes only from
-        /// <c>TrackOptions</c>.
+        /// does NOT become the wire's top-level <c>appVersion</c>, which comes only from the
+        /// <c>originAppVersion</c> parameter.
         /// </summary>
         [Fact]
         public async Task CustomerProperty_named_appVersion_stays_in_schema()
@@ -304,7 +306,7 @@ namespace Avo.Inspector.Tests
                     "E",
                     Props.Of(("appVersion", true)),
                     "s1",
-                    new TrackOptions { AppVersion = "5.1.0" });
+                    originAppVersion: "5.1.0");
 
                 Assert.Single(schema);
                 Assert.Equal("appVersion", schema[0].PropertyName);
@@ -342,7 +344,7 @@ namespace Avo.Inspector.Tests
                     "E",
                     Props.Of(("amount", 9.99)),
                     "s1",
-                    new TrackOptions { OutputReference = "meta-x7k2q", OriginHint = "web", AppVersion = "5.1.0" });
+                    outputReference: "meta-x7k2q", originHint: "web", originAppVersion: "5.1.0");
 
                 var evt = FirstEvent(server);
                 var wirePropertyNames = evt.GetProperty("eventProperties").EnumerateArray()
@@ -372,7 +374,7 @@ namespace Avo.Inspector.Tests
                     "E",
                     Props.Of(("x", 1)),
                     "s1",
-                    new TrackOptions { OutputReference = "meta-x7k2q", OriginHint = "web", AppVersion = "5.1.0" });
+                    outputReference: "meta-x7k2q", originHint: "web", originAppVersion: "5.1.0");
 
                 Assert.Equal(0, server.RequestCount); // buffered, not yet sent (batchSize 30)
 
@@ -398,7 +400,7 @@ namespace Avo.Inspector.Tests
                     "E",
                     Props.Of(("x", 1)),
                     "s1",
-                    new TrackOptions { OutputReference = "meta-x7k2q", OriginHint = "web", AppVersion = "5.1.0" });
+                    outputReference: "meta-x7k2q", originHint: "web", originAppVersion: "5.1.0");
 
                 Assert.Equal(1, server.RequestCount); // batchSize 1 -> sent immediately
                 var evt = FirstEvent(server);
@@ -425,7 +427,7 @@ namespace Avo.Inspector.Tests
                     "Large Payload Event",
                     big,
                     "s1",
-                    new TrackOptions { OutputReference = "meta-x7k2q", OriginHint = "web", AppVersion = "5.1.0" });
+                    outputReference: "meta-x7k2q", originHint: "web", originAppVersion: "5.1.0");
 
                 Assert.Equal(1, server.RequestCount);
                 Assert.Equal("gzip", server.Requests[0].ContentEncoding); // >= 1024 bytes -> gzip
@@ -449,7 +451,7 @@ namespace Avo.Inspector.Tests
                     "WithOptions",
                     Props.Of(("x", 1)),
                     "s1",
-                    new TrackOptions { OutputReference = "meta-x7k2q", OriginHint = "web", AppVersion = "5.1.0" });
+                    outputReference: "meta-x7k2q", originHint: "web", originAppVersion: "5.1.0");
                 await inspector.TrackSchemaFromEvent(
                     "WithoutOptions",
                     Props.Of(("y", 2)),
@@ -486,7 +488,7 @@ namespace Avo.Inspector.Tests
                     "E",
                     Props.Of(("x", 1)),
                     "s1",
-                    new TrackOptions { OutputReference = "meta-x7k2q", OriginHint = "web", AppVersion = "5.1.0" });
+                    outputReference: "meta-x7k2q", originHint: "web", originAppVersion: "5.1.0");
 
                 Assert.Single(schema); // schema still returned at enqueue
                 await inspector.Flush();
@@ -511,7 +513,7 @@ namespace Avo.Inspector.Tests
                     "E3",
                     Props.Of(("c", 3)),
                     "s1",
-                    new TrackOptions { OutputReference = "meta-x7k2q", OriginHint = "web", AppVersion = "5.1.0" });
+                    outputReference: "meta-x7k2q", originHint: "web", originAppVersion: "5.1.0");
 
                 Assert.Empty(schema); // post-destroy no-op; options never inspected
                 await inspector.Flush();
@@ -528,7 +530,7 @@ namespace Avo.Inspector.Tests
                 var inspector = new AvoInspector("k", "staging", "1.4.2", batchSize: 1);
 
                 await inspector.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1",
-                    new TrackOptions { OutputReference = "meta-x7k2q" });
+                    outputReference: "meta-x7k2q");
 
                 var evt = FirstEvent(server);
                 Assert.Equal("meta-x7k2q", evt.GetProperty("outputReference").GetString());
@@ -554,7 +556,7 @@ namespace Avo.Inspector.Tests
                 var inspector = new AvoInspector("k", "staging", "1.4.2", batchSize: 1);
 
                 await inspector.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1",
-                    new TrackOptions { OriginHint = "web" });
+                    originHint: "web");
 
                 var evt = FirstEvent(server);
                 Assert.False(evt.TryGetProperty("outputReference", out _)); // key absent, not null/""
@@ -572,7 +574,7 @@ namespace Avo.Inspector.Tests
                 var inspector = new AvoInspector("k", "staging", "1.0.0", batchSize: 1);
 
                 await inspector.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1",
-                    new TrackOptions { AppVersion = "5.1.0" });
+                    originAppVersion: "5.1.0");
 
                 var evt = FirstEvent(server);
                 Assert.Equal("5.1.0", evt.GetProperty("appVersion").GetString()); // unscoped override, trimmed
@@ -599,9 +601,9 @@ namespace Avo.Inspector.Tests
                 var properties = Props.Of(("amount", 9.99), ("currency", "EUR"));
 
                 await inspector.TrackSchemaFromEvent("Purchase Completed", properties, "s1",
-                    new TrackOptions { OutputReference = "meta-x7k2q" });
+                    outputReference: "meta-x7k2q");
                 await inspector.TrackSchemaFromEvent("Purchase Completed", properties, "s1",
-                    new TrackOptions { OutputReference = "ga4-z9k1p" });
+                    outputReference: "ga4-z9k1p");
 
                 Assert.Equal(2, server.RequestCount); // nothing deduplicated
 
@@ -629,34 +631,8 @@ namespace Avo.Inspector.Tests
             }
         }
 
-        [Fact]
-        public async Task Same_TrackOptions_instance_reused_unmutated_across_two_calls_produces_correct_body_both_times()
-        {
-            using var server = new TestInspectorServer();
-            using (new MockEndpointScope(server.BaseUrl))
-            {
-                var inspector = new AvoInspector("k", "staging", "1.0.0", batchSize: 1);
-                var options = new TrackOptions
-                {
-                    OutputReference = "meta-x7k2q", OriginHint = "web", AppVersion = "5.1.0"
-                };
-
-                await inspector.TrackSchemaFromEvent("E1", Props.Of(("a", 1)), "s1", options);
-                await inspector.TrackSchemaFromEvent("E2", Props.Of(("b", 2)), "s2", options);
-
-                Assert.Equal(2, server.RequestCount);
-                for (var i = 0; i < 2; i++)
-                {
-                    var evt = FirstEvent(server, i);
-                    Assert.Equal("meta-x7k2q", evt.GetProperty("outputReference").GetString());
-                    Assert.Equal("web", evt.GetProperty("originHint").GetString());
-                    Assert.Equal("5.1.0", evt.GetProperty("appVersion").GetString());
-                }
-            }
-        }
-
         /// <summary>
-        /// Row 2 of the SPEC.md §7.3.6 table (<c>OriginHint</c> set, no usable <c>AppVersion</c>)
+        /// Row 2 of the SPEC.md §7.3.6 table (<c>originHint</c> set, no usable <c>originAppVersion</c>)
         /// is an ordinary, fully supported call on <c>/inspector/v2/track</c>: the endpoint decodes
         /// both coordinates and stores a <c>null</c> <c>appVersion</c> as <c>"unversioned"</c>. It
         /// MUST therefore be silent. Through spec 2.1.0 this SDK emitted a one-shot stderr warning
@@ -668,7 +644,7 @@ namespace Avo.Inspector.Tests
         /// colon-bearing <c>streamId</c> on the same instance does reach stderr.
         /// </summary>
         [Fact]
-        public async Task OriginHint_without_usable_AppVersion_is_silent_on_v2()
+        public async Task OriginHint_without_usable_OriginAppVersion_is_silent_on_v2()
         {
             using var server = new TestInspectorServer();
             using (new MockEndpointScope(server.BaseUrl))
@@ -682,7 +658,7 @@ namespace Avo.Inspector.Tests
                     for (var i = 0; i < 5; i++)
                     {
                         await dev.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1",
-                            new TrackOptions { OutputReference = "meta-x7k2q", OriginHint = "web" });
+                            outputReference: "meta-x7k2q", originHint: "web");
                     }
 
                     // Nothing at all on stderr, and in particular no trace of the retired warning.
@@ -713,9 +689,9 @@ namespace Avo.Inspector.Tests
         /// copies next to <c>AvoInspector.dll</c> in this test project's own output directory.
         /// </summary>
         [Fact]
-        public void TrackOptions_type_and_all_three_properties_have_xmldoc_summaries()
+        public void All_three_coordinate_parameters_have_xmldoc_descriptions()
         {
-            var xmlPath = Path.ChangeExtension(typeof(TrackOptions).Assembly.Location, ".xml");
+            var xmlPath = Path.ChangeExtension(typeof(AvoInspector).Assembly.Location, ".xml");
 
             Assert.True(File.Exists(xmlPath),
                 "Expected the compiled XML doc file at \"" + xmlPath + "\" (copied next to " +
@@ -726,10 +702,31 @@ namespace Avo.Inspector.Tests
 
             var doc = XDocument.Load(xmlPath);
 
-            AssertHasNonEmptySummary(doc, "T:Avo.Inspector.TrackOptions");
-            AssertHasNonEmptySummary(doc, "P:Avo.Inspector.TrackOptions.OutputReference");
-            AssertHasNonEmptySummary(doc, "P:Avo.Inspector.TrackOptions.OriginHint");
-            AssertHasNonEmptySummary(doc, "P:Avo.Inspector.TrackOptions.AppVersion");
+            // SPEC.md §4.2.1 flattens the three into parameters for a language with named
+            // arguments, so what needs documenting is each <param>, not a type's properties.
+            const string TrackWithCoordinates =
+                "M:Avo.Inspector.AvoInspector.TrackSchemaFromEvent(System.String," +
+                "System.Collections.Generic.IDictionary{System.String,System.Object}," +
+                "System.String,System.String,System.String,System.String)";
+
+            AssertHasNonEmptySummary(doc, TrackWithCoordinates);
+            AssertHasNonEmptyParam(doc, TrackWithCoordinates, "outputReference");
+            AssertHasNonEmptyParam(doc, TrackWithCoordinates, "originHint");
+            AssertHasNonEmptyParam(doc, TrackWithCoordinates, "originAppVersion");
+        }
+
+        private static void AssertHasNonEmptyParam(XDocument doc, string memberName, string paramName)
+        {
+            var member = doc.Descendants("member")
+                .FirstOrDefault(m => (string?)m.Attribute("name") == memberName);
+            Assert.True(member != null, "No <member name=\"" + memberName + "\"> entry found in the XML doc file.");
+
+            var param = member!.Elements("param")
+                .FirstOrDefault(p => (string?)p.Attribute("name") == paramName);
+            Assert.True(param != null,
+                "<member name=\"" + memberName + "\"> has no <param name=\"" + paramName + "\"> element.");
+            Assert.False(string.IsNullOrWhiteSpace(param!.Value),
+                "<param name=\"" + paramName + "\"> is empty.");
         }
 
         private static void AssertHasNonEmptySummary(XDocument doc, string memberName)

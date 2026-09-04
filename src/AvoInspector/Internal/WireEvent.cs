@@ -8,18 +8,20 @@ namespace Avo.Inspector.Internal
     /// JSON array of these.
     /// </summary>
     /// <remarks>
-    /// <para><b><c>sessionId</c> (SPEC.md §3.3).</b> Every event carries <c>sessionId: ""</c>, which
-    /// the spec has REQUIRED of server SDKs since v2.0.0: the live Inspector ingestion pipeline
-    /// silently <i>drops</i> events that omit <c>sessionId</c> (the request still returns
-    /// <c>200 {"success":true}</c>, yet the event never appears on the dashboard). Verified
-    /// empirically by field-bisection against the live API: adding only <c>sessionId: ""</c> to an
-    /// otherwise spec-shaped body is necessary and sufficient for ingestion;
-    /// <c>trackingId</c>/<c>eventId</c>/<c>eventHash</c>/<c>avoFunction</c> are not. This SDK is
-    /// therefore conformant, not divergent — it emits <c>sessionId: ""</c> and omits
-    /// <c>trackingId</c>/<c>visitorId</c>/<c>userId</c>, as SPEC.md §3.3 requires.</para>
+    /// <para><b>No <c>sessionId</c> (SPEC.md §3.3).</b> Spec 3.0.0 removed the field from the wire
+    /// body: a server SDK has no session to report, and <c>/inspector/v2/track</c> supplies the
+    /// value itself. Spec 2.0.0 had REQUIRED it as <c>""</c> because the ingestion pipeline then
+    /// dropped events whose body omitted it — answering <c>200 {"success":true}</c> while the event
+    /// never reached the dashboard — which is why the field is <i>removed</i> rather than
+    /// <i>forbidden</i>: the 3.0.0 schemas still accept a body that carries it, so a sender that has
+    /// not regenerated stays valid. Correlation across events belongs in <c>streamId</c>, which is
+    /// OPTIONAL and caller-supplied. <c>trackingId</c>, <c>visitorId</c> and <c>userId</c> remain
+    /// forbidden outright.</para>
     /// <para><b>Gateway coordinate fields (SPEC.md §4.2.1 / §7.3.6; AVO-3516).</b>
     /// <see cref="OutputReference"/> and <see cref="OriginHint"/> are OPTIONAL top-level siblings
-    /// of <c>eventProperties</c> for gateway-scoped API keys (see <see cref="TrackOptions"/>),
+    /// of <c>eventProperties</c> for gateway-scoped API keys, carried by the <c>outputReference</c>
+    /// and <c>originHint</c> parameters of
+    /// <see cref="AvoInspector.TrackSchemaFromEvent(string, IDictionary{string, object}, string, string, string, string)"/>,
     /// omitted entirely when absent. <see cref="AppVersion"/> is therefore also nullable — per the
     /// §7.3.6 resolution table, with <c>originHint</c> set and no usable per-event app version,
     /// <c>appVersion</c> is sent as a literal JSON <c>null</c> rather than falling back to the
@@ -39,8 +41,6 @@ namespace Avo.Inspector.Internal
         [JsonPropertyName("libPlatform")] public string LibPlatform { get; set; } = string.Empty;
         [JsonPropertyName("messageId")] public string MessageId { get; set; } = string.Empty;
         [JsonPropertyName("streamId")] public string StreamId { get; set; } = string.Empty;
-        // REQUIRED on the wire as "" for server SDKs (SPEC.md §3.3; see class remarks).
-        [JsonPropertyName("sessionId")] public string SessionId { get; set; } = string.Empty;
         [JsonPropertyName("createdAt")] public string CreatedAt { get; set; } = string.Empty;
         [JsonPropertyName("samplingRate")] public double SamplingRate { get; set; }
         [JsonPropertyName("type")] public string Type { get; set; } = "event";

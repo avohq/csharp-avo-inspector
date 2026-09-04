@@ -23,7 +23,6 @@ Internal C# class in namespace `Avo.Inspector.Internal`. Serialized with `System
 - `string LibPlatform` → `libPlatform`
 - `string MessageId` → `messageId`
 - `string StreamId` → `streamId`
-- `string SessionId` → `sessionId`
 - `string CreatedAt` → `createdAt`
 - `double SamplingRate` → `samplingRate`
 - `string Type` → `type` (defaults to `"event"`)
@@ -42,10 +41,10 @@ default to `null` (no initializer).
 
 `EventProperties` is a list of `SchemaEntry`, which serializes via its own attribute-bound converter (no global naming policy is applied).
 
-**IMPORTANT: `sessionId` is always emitted as `""` (empty string).** SPEC.md §3.3 REQUIRES exactly this of server SDKs (since spec v2.0.0): the live ingestion pipeline silently drops events that omit `sessionId` — the request still returns `200 {"success":true}` yet the event never reaches the dashboard. Emitting `sessionId: ""` is necessary and sufficient for ingestion (matching the canonical `js-avo-inspector` SDK). This is conformance, not a divergence.
+**IMPORTANT: there is no `sessionId` field.** Spec 3.0.0 removed it from the wire body (SPEC.md §3.3): a server SDK has no session to report, and `/inspector/v2/track` supplies the value itself. Spec 2.0.0 had REQUIRED it as `""` because ingestion then silently dropped events whose body omitted it — the request returned `200 {"success":true}` yet the event never reached the dashboard — which is why 3.0.0 *removes* rather than *forbids* it: the 3.0.0 schemas still accept a body that carries it, so a sender that has not regenerated stays valid. Correlation belongs in `streamId`.
 
 **IMPORTANT: the type intentionally has no `trackingId`, `visitorId`, or `userId` field**, so they are never serialized. These are not required by the backend.
 
 There is no `eventId`, `eventHash`, or `avoFunction` field either.
 
-**IMPORTANT: `outputReference`/`originHint` are the OPTIONAL gateway coordinate fields of SPEC.md §4.2.1 / §7.3.6** (AVO-3516) — top-level siblings of `eventProperties` for gateway-scoped API keys (see `TrackOptions`). They are placed after `EventProperties` and each individually carries `[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]`, never a global `DefaultIgnoreCondition`, because a global setting would also suppress `appVersion: null` — the one field §7.3.6 has this SDK send as a literal wire `null`.
+**IMPORTANT: `outputReference`/`originHint` are the OPTIONAL gateway coordinate fields of SPEC.md §4.2.1 / §7.3.6** (AVO-3516) — top-level siblings of `eventProperties` for gateway-scoped API keys, carried by the `outputReference` and `originHint` parameters of `TrackSchemaFromEvent`. They are placed after `EventProperties` and each individually carries `[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]`, never a global `DefaultIgnoreCondition`, because a global setting would also suppress `appVersion: null` — the one field §7.3.6 has this SDK send as a literal wire `null`.

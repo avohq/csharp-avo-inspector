@@ -1,7 +1,6 @@
 ---
 import:
 src/AvoInspector/AvoInspectorOptions.cs.md
-src/AvoInspector/TrackOptions.cs.md
 src/AvoInspector/AvoInspectorEnv.cs.md
 src/AvoInspector/AvoSchemaParser.cs.md
 src/AvoInspector/SchemaEntry.cs.md
@@ -72,8 +71,14 @@ public AvoInspector(string apiKey, string env, string version, string? appName =
   (it would fail the §7.2 header guard on every send) into a working integration. It costs no
   security, because `Trim` strips only surrounding whitespace: it repairs exactly the accident — a
   trailing CR or LF with nothing after it — while a control character with content on both sides
-  survives it, and NUL survives anywhere since NUL is not whitespace. Whatever survives is still
-  rejected by `InspectorHttpSender` before the wire. Whitespace-only still throws, since `Trim` leaves it empty.
+  survives it, and NUL survives anywhere since NUL is not whitespace. **Whatever survives is fatal:**
+  SPEC.md §4.1 requires the constructor to throw `ArgumentException` with the exact message
+  `"[Avo Inspector] API key contains a control character. The API key is sent as a request header
+  and cannot contain CR, LF, or NUL."`, checked with `InspectorHttpSender.IsSafeHeaderValue` so the
+  constructor and the sender can never disagree. The check runs after the emptiness check, so a
+  whitespace-only key is still "no API key provided" and never reaches it. This throw is deliberately
+  redundant with the sender's §7.2 refusal: that guard is what protects the wire, but on its own it
+  turns a configuration mistake into a process that starts cleanly and delivers nothing.
 - Both overloads converge on the same init logic and **validate in order**: `apiKey` first, then
   `version`. Each must be non-null/non-empty/non-whitespace, else throw `ArgumentException` with the
   **exact** spec messages — `"[Avo Inspector] No API key provided. Inspector can't operate without
@@ -109,28 +114,30 @@ an empty list for a null map or on any internal parser error (logging the error 
 ### Tracking
 
 ```csharp
-// 1.0.0 signature, retained unchanged (binary-compatible); delegates with options: null.
+// 1.0.0 CLR signature, retained (binary-compatible); delegates with all three coordinates null.
+// Declares no default for streamId: one here would make a two-argument call ambiguous with the
+// form below (CS0121), and a default is call-site metadata, not part of the CLR signature.
 public Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(
-    string eventName, IDictionary<string, object?>? eventProperties, string? streamId = null)
+    string eventName, IDictionary<string, object?>? eventProperties, string? streamId)
 
-// Gateway-aware overload. Both trailing parameters are required so two- and three-argument
-// calls always bind unambiguously to the overload above.
+// SPEC.md §4.2.1 flattened form: C# has named arguments, so the three coordinates are top-level
+// optional parameters rather than an options object.
 public Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(
-    string eventName, IDictionary<string, object?>? eventProperties, string? streamId,
-    TrackOptions? options)
+    string eventName, IDictionary<string, object?>? eventProperties, string? streamId = null,
+    string? outputReference = null, string? originHint = null, string? originAppVersion = null)
 ```
 
 Pipeline: extract schema → resolve stream id → apply per-event sampling → enqueue into the pending
 batch → dispatch a send when a flush trigger fires.
 
-- **`options` (`TrackOptions`, SPEC.md §4.2.1 / §7.3.6 — spec v2.1.0's gateway track options;
-  AVO-3516):** supplied through the four-parameter overload that §4.2.1 prescribes for
-  languages without optional trailing parameters;
-  the retained three-parameter overload passes `null`, so every existing call site — source or
-  precompiled — keeps compiling, binding, and behaving identically. Threaded
-  unchanged into `BuildWireEvent`; its properties are only inspected there (see "Wire event
-  construction" below), and not at all if the event is sampled out first. No lock is taken for it —
-  per-call, immutable input.
+- **`outputReference` / `originHint` / `originAppVersion` (SPEC.md §4.2.1 / §7.3.6 — the gateway
+  track options once drafted as spec v2.1.0; AVO-3516):** top-level optional parameters, the shape
+  §4.2.1 requires of a language with named arguments — a caller writes `originAppVersion: "4.2.0"`
+  at the call site. The retained 1.0.0 overload passes all three as `null`, so every existing call
+  site — source or precompiled — keeps compiling, binding, and behaving identically. Threaded
+  unchanged into `BuildWireEvent`, which is the only place they are inspected (see "Wire event
+  construction" below), and not at all if the event is sampled out first. No lock is taken for them
+  — per-call, immutable input.
 
 - **Post-`Destroy` no-op:** resolves with an empty list, no enqueue, no HTTP call. Re-checked again
   under the lock right before enqueue to handle a mid-flight `Destroy`.
@@ -163,25 +170,26 @@ culture), the sampling-rate snapshot, `type = "event"`, the event name (null →
 extracted schema as `eventProperties` — plus, since this SDK's 1.1.0, the gateway coordinate fields
 below (SPEC.md §7.3.6; AVO-3516).
 
-**Gateway coordinate fields (SPEC.md §7.3.6).** `options?.OutputReference`, `options?.OriginHint`, and
-`options?.AppVersion` are each normalized by `NormalizeHint(string?)` — same shape as
+**Gateway coordinate fields (SPEC.md §7.3.6).** The `outputReference`, `originHint` and
+`originAppVersion` arguments are each normalized by `NormalizeHint(string?)` — same shape as
 `ResolveStreamId`, but trims and returns `null` (omit the wire key) for `null`/`""`/whitespace-only
 instead of `""`, and never logs. `outputReference`/`originHint` are set on the `WireEvent` as-is
 (omitted on the wire when `null`, via `WireEvent`'s per-property `[JsonIgnore]`). `appVersion`
 resolves per SPEC.md §7.3.6's table, restated here:
 
-| `OriginHint` (normalized) | `AppVersion` (normalized) | wire `appVersion` |
+| `originHint` (normalized) | `originAppVersion` (normalized) | wire `appVersion` |
 |---|---|---|
-| set | set (non-blank) | `AppVersion`, trimmed |
+| set | set (non-blank) | `originAppVersion`, trimmed |
 | set | absent/blank | literal JSON `null` |
-| absent | set (non-blank) | `AppVersion`, trimmed |
+| absent | set (non-blank) | `originAppVersion`, trimmed |
 | absent | absent/blank | the instance's constructed `appVersion` (unchanged 1.0.0 behavior) |
 
-With `options == null` or an empty `new TrackOptions()`, every field above normalizes to `null` and
-the wire body carries exactly the 1.0.0 key set and values (no `outputReference`/`originHint` keys,
-`appVersion` = the constructor value); the only difference from a 1.0.0 body is `libVersion`.
+When none of the three is supplied, every field above normalizes to `null` and the wire body
+carries exactly the 1.0.0 key set and values (no `outputReference`/`originHint` keys, `appVersion`
+= the constructor value); the only difference from a 1.0.0 body is `libVersion`.
 
-**No warning on the `null` `appVersion` row.** Row 2 (`originHint` set, no usable `AppVersion`) is
+**No warning on the `null` `appVersion` row.** Row 2 (`originHint` set, no usable
+`originAppVersion`) is
 an ordinary, fully supported call: `/inspector/v2/track` decodes both coordinates and stores a
 `null` `appVersion` as `"unversioned"`. `BuildWireEvent` MUST stay silent on it. The one-shot
 stderr warning this SDK carried through spec 2.1.0, and its process-wide `Interlocked` latch, were

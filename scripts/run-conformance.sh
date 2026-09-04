@@ -11,15 +11,20 @@
 # Environment overrides:
 #   SPEC_REPO_URL   git URL of the spec repo (default: the public avohq repo)
 #   SPEC_DIR        local checkout path     (default: <repo>/.spec-repo)
-#   SPEC_REF        branch/tag/sha to check out (default: main)
+#   SPEC_REF        branch/tag/sha to check out (default: gateway-track-options)
 #
-# `main` is spec 2.0.0 (30 fixtures). The `gateway-track-options` branch carries spec 3.0.0 —
-# the unified POST /inspector/v2/track endpoint and its REQUIRED api-key / env / X-Avo-Client
-# request headers (SPEC.md §7.1/§7.2), the version this SDK records in
-# InspectorVersion.SpecVersion — on top of 2.1.0's gateway track options (SPEC.md §4.2.1/§7.3.6).
-# It is still an open avohq spec PR, so to run the full suite:
+# The default is the branch carrying spec 3.0.0 (36 fixtures) — the unified
+# POST /inspector/v2/track endpoint and its REQUIRED api-key / env / X-Avo-Client request headers
+# (SPEC.md §7.1/§7.2), the gateway track options once drafted as 2.1.0 (SPEC.md §4.2.1/§7.3.6),
+# and the removal of the wire sessionId (SPEC.md §3.3). That is the version this SDK records in
+# InspectorVersion.SpecVersion, so it is the only ref that can produce a clean run. Change the
+# default to `main` once the avohq spec PR merges and 3.0.0 lands there.
 #
-#   SPEC_REF=gateway-track-options ./scripts/run-conformance.sh   # 36/36
+# Running against `main` (spec 2.0.0) FAILS 10 of its 30 fixtures, and correctly so: every
+# 2.0.0 fixture body asserts `sessionId: ""`, which spec 3.0.0 removed from the wire and this
+# SDK therefore no longer sends. That is spec drift, not an SDK regression.
+#
+#   SPEC_REF=main ./scripts/run-conformance.sh   # 20/30 — expected, see above
 #
 # No harness change is needed for the headers: the suite drives the SDK through
 # AVO_INSPECTOR_MOCK_ENDPOINT, and the runner records request headers itself and asserts them
@@ -29,7 +34,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SPEC_REPO_URL="${SPEC_REPO_URL:-https://github.com/avohq/spec-first-inspector-server-sdk.git}"
 SPEC_DIR="${SPEC_DIR:-$ROOT/.spec-repo}"
-SPEC_REF="${SPEC_REF:-main}"
+SPEC_REF="${SPEC_REF:-gateway-track-options}"
 HARNESS_PROJECT="$ROOT/conformance/AvoInspector.Conformance/AvoInspector.Conformance.csproj"
 HARNESS_DLL="$ROOT/conformance/AvoInspector.Conformance/bin/Release/net8.0/AvoInspector.Conformance.dll"
 

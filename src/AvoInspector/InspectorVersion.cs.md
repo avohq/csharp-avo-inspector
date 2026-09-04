@@ -18,7 +18,7 @@ Public constants:
   SDK implements; independent of `LibVersion`. `3.0.0` is a `[WIRE]` MAJOR — the unified
   `POST /inspector/v2/track` endpoint plus the REQUIRED `api-key`/`env`/`X-Avo-Client` request
   headers (SPEC.md §7.1, §7.2) — on top of `2.1.0`'s gateway track options (SPEC.md §4.2.1,
-  §7.3.6) and `2.0.0`'s REQUIRED wire `sessionId` (SPEC.md §3.3).
+  §7.3.6) — passed as top-level optional parameters, the shape §4.2.1 requires of a language with named arguments — and **removes** the wire `sessionId` that `2.0.0` had REQUIRED (SPEC.md §3.3).
 - `const string HarnessContractVersion = "1.1.0"` — version of the conformance runner contract this
   SDK's harness implements. `1.1.0` adds the optional `options` object on single-event
   `trackSchemaFromEvent` input and on sequence `track` steps.

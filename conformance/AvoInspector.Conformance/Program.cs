@@ -139,7 +139,7 @@ namespace Avo.Inspector.Conformance
                 properties = JsonInterop.ToPropertyMap(propsEl);
             }
             var streamId = input.ValueKind == JsonValueKind.Object ? GetString(input, "streamId") : null;
-            var options = ReadTrackOptions(input);
+            var options = ReadTrackCoordinates(input);
 
             object? actual;
             string outcome;
@@ -181,7 +181,7 @@ namespace Avo.Inspector.Conformance
                             properties = JsonInterop.ToPropertyMap(propsEl);
                         }
                         var streamId = GetString(step, "streamId");
-                        var options = ReadTrackOptions(step);
+                        var options = ReadTrackCoordinates(step);
                         var value = await CallTrack(inspector, eventName, properties, streamId, options)
                             .ConfigureAwait(false);
                         records.Add(new StepRecord("track", "resolve", value));
@@ -250,31 +250,51 @@ namespace Avo.Inspector.Conformance
 
         private static Task<IReadOnlyList<SchemaEntry>> CallTrack(
             AvoInspector inspector, string eventName, IDictionary<string, object?>? properties,
-            string? streamId, TrackOptions? options)
+            string? streamId, TrackCoordinates? options)
         {
             if (options != null)
             {
-                // runner-contract 1.1.0: with `options` present the harness always uses the
-                // four-parameter overload, passing null for an absent streamId (the SDK resolves
-                // it to "" exactly as the omitted third argument would).
-                return inspector.TrackSchemaFromEvent(eventName, properties, streamId, options);
+                // runner-contract 1.1.0 + SPEC.md §4.2.1: this SDK flattens the three coordinates,
+                // so the harness passes each envelope key as its matching top-level parameter
+                // rather than as an options object. streamId is passed as null when the fixture has
+                // none (the SDK resolves it to "" exactly as the omitted third argument would).
+                return inspector.TrackSchemaFromEvent(
+                    eventName,
+                    properties,
+                    streamId,
+                    outputReference: options.OutputReference,
+                    originHint: options.OriginHint,
+                    originAppVersion: options.OriginAppVersion);
             }
-            // No `options` in the fixture: keep the pre-2.1.0 call shape — never a four-argument
-            // call with an empty TrackOptions — and omit the third argument when no streamId is
-            // provided (contract-correct arity).
+            // No `options` in the fixture: pass none of the three — never blank placeholders — and
+            // omit the third argument when no streamId is provided (contract-correct arity).
             return streamId == null
                 ? inspector.TrackSchemaFromEvent(eventName, properties)
                 : inspector.TrackSchemaFromEvent(eventName, properties, streamId);
         }
 
         /// <summary>
-        /// Maps a fixture's optional <c>options</c> object (runner-contract 1.1.0; SPEC.md §4.2.1)
-        /// onto a <see cref="TrackOptions"/>. Values are copied <b>verbatim</b> — no trimming,
-        /// dropping, or coercion; normalization is the SDK's job and is exactly what the fixture
-        /// asserts. Returns <c>null</c> when the fixture carries no <c>options</c>, so the harness
-        /// makes the three-parameter call instead of passing an empty options object.
+        /// The three gateway coordinates exactly as a fixture's <c>options</c> object carries them,
+        /// before any SDK normalization. A harness-local carrier only: SPEC.md §4.2.1 puts C# on the
+        /// named-argument row, so the SDK itself exposes no options type — the runner-contract
+        /// envelope key stays <c>options</c> in either shape, being the transport for the three
+        /// values rather than a claim about the SDK's signature.
         /// </summary>
-        private static TrackOptions? ReadTrackOptions(JsonElement element)
+        private sealed class TrackCoordinates
+        {
+            public string? OutputReference { get; set; }
+            public string? OriginHint { get; set; }
+            public string? OriginAppVersion { get; set; }
+        }
+
+        /// <summary>
+        /// Reads a fixture's optional <c>options</c> object (runner-contract 1.1.0; SPEC.md §4.2.1).
+        /// Values are copied <b>verbatim</b> — no trimming, dropping, or coercion; normalization is
+        /// the SDK's job and is exactly what the fixture asserts. Returns <c>null</c> when the
+        /// fixture carries no <c>options</c>, so the harness passes none of the three rather than
+        /// blank values.
+        /// </summary>
+        private static TrackCoordinates? ReadTrackCoordinates(JsonElement element)
         {
             if (element.ValueKind != JsonValueKind.Object
                 || !element.TryGetProperty("options", out var options)
@@ -282,11 +302,14 @@ namespace Avo.Inspector.Conformance
             {
                 return null;
             }
-            return new TrackOptions
+            return new TrackCoordinates
             {
                 OutputReference = GetString(options, "outputReference"),
                 OriginHint = GetString(options, "originHint"),
-                AppVersion = GetString(options, "appVersion")
+                // SPEC.md §4.2.1 renamed the option to `originAppVersion`; the wire field it
+                // resolves stays `appVersion` (§7.3.1). Fixtures wire-9 / wire-11 / batch-7 carry
+                // the renamed key.
+                OriginAppVersion = GetString(options, "originAppVersion")
             };
         }
 

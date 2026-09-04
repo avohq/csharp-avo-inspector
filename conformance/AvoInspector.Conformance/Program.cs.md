@@ -24,8 +24,10 @@ Input envelope fields read: `fixture_id` (required), `suite`, `operation`, `cons
 `input` (`eventName`/`eventProperties`/`streamId`/`options`), `steps` (each `track` step may also
 carry `options`), `precondition.samplingRate`.
 
-`options` → `TrackOptions { OutputReference, OriginHint, AppVersion }` from the string keys
-`outputReference` / `originHint` / `appVersion`.
+`options` → a harness-local `TrackCoordinates { OutputReference, OriginHint, OriginAppVersion }` from the string keys
+`outputReference` / `originHint` / `originAppVersion` (SPEC.md §4.2.1 renamed the option; the wire
+field it resolves stays `appVersion`). It is a harness type, not an SDK one: §4.2.1 puts C# on the
+named-argument row, so the SDK exposes the three as parameters and no options type of its own.
 
 `OutputEnvelope` → `{ fixture_id, passed, actual, outcome, error }`.
 `StepRecord` → `{ action, outcome, value }` (one per sequence step).
@@ -41,20 +43,22 @@ carry `options`), `precondition.samplingRate`.
    - `extractSchema` — convert `input` to a property map (`null` passes through) and return
      `ExtractSchema(...)` as `actual`, `outcome: "resolve"`.
    - `trackSchemaFromEvent` — call `TrackSchemaFromEvent(eventName, eventProperties, streamId?,
-     options?)`. On success `actual` is the resolved schema; an `AvoInspectorTrackException` becomes
-     `outcome: "reject"` with the exact rejection string as `actual`.
+     outputReference?, originHint?, originAppVersion?)`. On success `actual` is the resolved schema;
+     an `AvoInspectorTrackException` becomes `outcome: "reject"` with the exact rejection string as
+     `actual`.
    - `sequence` — run `steps` in order against one instance, recording a `StepRecord` each:
      `track` (await, same `options` handling as above), `trackN` (fire `count` **genuinely
      concurrent** tracks via thread-pool tasks, join all, value = count), `flush` (await
      `Flush(timeoutMs?)`), `destroy`.
-5. **Call arity for `options` (runner-contract 1.1.0).** When the fixture carries an `options`
-   object, use the four-parameter overload and pass its three string keys **verbatim** — no
-   trimming, dropping, or coercion, since normalization is the SDK behavior the fixture asserts —
-   with `null` for an absent `streamId`. A non-string JSON value cannot cross into a `string?`
-   option property, so in this harness it is simply absent; SPEC.md §7.3.6 rule 3 makes that the
-   required outcome anyway, enforced by the type system in a statically-typed SDK rather than by
-   harness code. When the fixture carries no `options`, make the pre-2.1.0
-   call: never a four-argument call with an empty `TrackOptions`, and the third argument omitted
+5. **Call shape for `options` (runner-contract 1.1.0; SPEC.md §4.2.1).** The envelope key stays
+   `options` in either call-site shape — it is the transport for the three values, not a claim about
+   the SDK's signature — and this SDK flattens them, so the harness passes each key as its matching
+   top-level named argument, **verbatim**: no trimming, dropping, or coercion, since normalization
+   is the SDK behavior the fixture asserts. `streamId` is passed as `null` when the fixture has
+   none. A non-string JSON value cannot cross into a `string?` parameter, so in this harness it is
+   simply absent; SPEC.md §7.3.6 rule 3 makes that the required outcome anyway, enforced by the type
+   system in a statically-typed SDK rather than by harness code. When the fixture carries no
+   `options`, pass none of the three — never blank placeholders — and omit the third argument
    entirely when no `streamId` is given (contract-correct arity).
 6. Write exactly one output envelope as a single UTF-8 JSON line to stdout, then exit.
 

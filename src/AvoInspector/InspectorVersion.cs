@@ -31,9 +31,11 @@ namespace Avo.Inspector
         /// implements (VERSIONING.md). Independent of <see cref="LibVersion"/>. <c>3.0.0</c> is a
         /// <c>[WIRE]</c> MAJOR: every Inspector sender moves to the unified
         /// <c>POST /inspector/v2/track</c> endpoint and sends <c>api-key</c>, <c>env</c> and
-        /// <c>X-Avo-Client</c> as request headers (SPEC.md §7.1, §7.2). It keeps <c>2.1.0</c>'s
-        /// gateway track options (SPEC.md §4.2.1, §7.3.6) and <c>2.0.0</c>'s REQUIRED wire
-        /// <c>sessionId</c> (SPEC.md §3.3).
+        /// <c>X-Avo-Client</c> as request headers (SPEC.md §7.1, §7.2). It also folds in the
+        /// gateway track options once drafted as <c>2.1.0</c> (SPEC.md §4.2.1, §7.3.6) — passed as
+        /// top-level optional parameters, the shape §4.2.1 requires of a language with named
+        /// arguments — and <b>removes</b> the wire <c>sessionId</c> that <c>2.0.0</c> had REQUIRED
+        /// (SPEC.md §3.3).
         /// </summary>
         public const string SpecVersion = "3.0.0";
 
