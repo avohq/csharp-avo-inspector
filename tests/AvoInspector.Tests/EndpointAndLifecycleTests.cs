@@ -109,9 +109,11 @@ namespace Avo.Inspector.Tests
         /// SPEC.md §7.2 carries the apiKey in a request header, so a key holding CR, LF or NUL could
         /// terminate the header line and inject content into the outbound request. The header is set
         /// with <c>TryAddWithoutValidation</c>, which by definition does not check, and there is no
-        /// transport backstop: with the guard removed, net8.0 sends all three of these and the server
-        /// parses <c>X-Injected</c> as a real header. The sender MUST therefore reject the batch
-        /// itself — nothing transmitted, <c>SendStatus.Error</c> returned. The vector is specific to
+        /// transport backstop: with the guard removed, net8.0 transmits every one of these. The CR
+        /// and CRLF keys arrive with <c>X-Injected</c> parsed as a genuine separate header, the LF
+        /// key folds into one corrupted value, and the NUL key reaches the server, which rejects it.
+        /// The sender MUST therefore reject the batch itself — nothing transmitted,
+        /// <c>SendStatus.Error</c> returned. The vector is specific to
         /// the v2 header move: in v1 the key travelled only in the JSON body, where it cannot break
         /// framing.
         /// </summary>
