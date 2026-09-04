@@ -11,19 +11,19 @@
 # Environment overrides:
 #   SPEC_REPO_URL   git URL of the spec repo (default: the public avohq repo)
 #   SPEC_DIR        local checkout path     (default: <repo>/.spec-repo)
-#   SPEC_REF        branch/tag/sha to check out (default: require-sessionid-on-wire)
+#   SPEC_REF        branch/tag/sha to check out (default: main)
 #
-# NOTE: SPEC_REF defaults to the `require-sessionid-on-wire` branch (avohq spec PR #2),
-# which fixes the spec to REQUIRE sessionId on the wire — the live ingestion pipeline
-# drops events that omit it. Until that PR merges, running against `main` reports
-# 20/30 because main still (incorrectly) forbids sessionId. After it merges, set
-# SPEC_REF=main.
+# `main` is spec 2.0.0 (30 fixtures). Spec 2.1.0 — the gateway track options this SDK
+# implements (SPEC.md §4.2.1/§7.3.6) — is still open as avohq spec PR #3, so to exercise
+# its six extra fixtures (wire-9…wire-13, batch-7) run:
+#
+#   SPEC_REF=gateway-track-options ./scripts/run-conformance.sh   # 36/36
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SPEC_REPO_URL="${SPEC_REPO_URL:-https://github.com/avohq/spec-first-inspector-server-sdk.git}"
 SPEC_DIR="${SPEC_DIR:-$ROOT/.spec-repo}"
-SPEC_REF="${SPEC_REF:-require-sessionid-on-wire}"
+SPEC_REF="${SPEC_REF:-main}"
 HARNESS_PROJECT="$ROOT/conformance/AvoInspector.Conformance/AvoInspector.Conformance.csproj"
 HARNESS_DLL="$ROOT/conformance/AvoInspector.Conformance/bin/Release/net8.0/AvoInspector.Conformance.dll"
 

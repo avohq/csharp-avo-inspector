@@ -26,13 +26,17 @@ namespace Avo.Inspector
 
         /// <summary>
         /// The version of the <c>avohq/spec-first-inspector-server-sdk</c> contract this SDK
-        /// implements (VERSIONING.md). Independent of <see cref="LibVersion"/>.
+        /// implements (VERSIONING.md). Independent of <see cref="LibVersion"/>. <c>2.1.0</c> adds
+        /// the gateway track options (SPEC.md §4.2.1, §7.3.6) on top of <c>2.0.0</c>'s REQUIRED
+        /// wire <c>sessionId</c> (SPEC.md §3.3).
         /// </summary>
-        public const string SpecVersion = "1.0.0";
+        public const string SpecVersion = "2.1.0";
 
         /// <summary>
         /// The version of <c>conformance/runner-contract.md</c> this SDK's harness implements.
+        /// <c>1.1.0</c> adds the optional <c>options</c> object on single-event
+        /// <c>trackSchemaFromEvent</c> input and on sequence <c>track</c> steps.
         /// </summary>
-        public const string HarnessContractVersion = "1.0.0";
+        public const string HarnessContractVersion = "1.1.0";
     }
 }

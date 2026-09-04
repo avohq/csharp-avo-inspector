@@ -31,7 +31,7 @@ Internal C# class in namespace `Avo.Inspector.Internal`. Serialized with `System
 - `IReadOnlyList<SchemaEntry> EventProperties` → `eventProperties` (defaults to empty list)
 - `string? OutputReference` → `outputReference` — nullable, `[JsonIgnore(Condition =
   JsonIgnoreCondition.WhenWritingNull)]`: omitted from the wire entirely when `null`, never sent as
-  `null`
+  `null` (SPEC.md §7.3.6)
 - `string? OriginHint` → `originHint` — same nullable/`[JsonIgnore(WhenWritingNull)]` shape as
   `OutputReference`
 
@@ -42,12 +42,10 @@ default to `null` (no initializer).
 
 `EventProperties` is a list of `SchemaEntry`, which serializes via its own attribute-bound converter (no global naming policy is applied).
 
-// The two load-bearing wire-shape decisions below are deliberate divergences from SPEC.md.
-
-**IMPORTANT: `sessionId` is always emitted as `""` (empty string).** SPEC.md §3.3/§7.3.1 say `sessionId` MUST NOT be sent, but the live ingestion pipeline silently drops events that omit it — the request still returns `200 {"success":true}` yet the event never reaches the dashboard. Emitting `sessionId: ""` is necessary and sufficient for ingestion (matching the canonical `js-avo-inspector` SDK).
+**IMPORTANT: `sessionId` is always emitted as `""` (empty string).** SPEC.md §3.3 REQUIRES exactly this of server SDKs (since spec v2.0.0): the live ingestion pipeline silently drops events that omit `sessionId` — the request still returns `200 {"success":true}` yet the event never reaches the dashboard. Emitting `sessionId: ""` is necessary and sufficient for ingestion (matching the canonical `js-avo-inspector` SDK). This is conformance, not a divergence.
 
 **IMPORTANT: the type intentionally has no `trackingId`, `visitorId`, or `userId` field**, so they are never serialized. These are not required by the backend.
 
 There is no `eventId`, `eventHash`, or `avoFunction` field either.
 
-**IMPORTANT: `outputReference`/`originHint` are an Avo-contract extension (AVO-3516/AVO-3543), not part of `avohq/spec-first-inspector-server-sdk` v1.0.0** — the same kind of deliberate divergence as the `sessionId` note above, for gateway-scoped API keys (see `TrackOptions`). They are placed after `EventProperties` and each individually carries `[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]`, never a global `DefaultIgnoreCondition`, because a global setting would also suppress `appVersion: null` — the one field this SDK legitimately sends as a literal wire `null`.
+**IMPORTANT: `outputReference`/`originHint` are the OPTIONAL gateway coordinate fields of SPEC.md §4.2.1 / §7.3.6** (spec v2.1.0; AVO-3516/AVO-3543) — top-level siblings of `eventProperties` for gateway-scoped API keys (see `TrackOptions`). They are placed after `EventProperties` and each individually carries `[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]`, never a global `DefaultIgnoreCondition`, because a global setting would also suppress `appVersion: null` — the one field §7.3.6 has this SDK send as a literal wire `null`.

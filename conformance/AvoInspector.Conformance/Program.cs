@@ -14,7 +14,9 @@ namespace Avo.Inspector.Conformance
     /// JSON protocol in <c>conformance/runner-contract.md</c>. It contains NO assertion logic — it
     /// parses the input envelope, constructs an <see cref="AvoInspector"/>, runs the requested
     /// operation, and writes exactly one output envelope line to stdout. All diagnostics go to
-    /// stderr. HARNESS_CONTRACT_VERSION: 1.0.0.
+    /// stderr. HARNESS_CONTRACT_VERSION: 1.1.0 (see
+    /// <see cref="InspectorVersion.HarnessContractVersion"/>) — adds the optional <c>options</c>
+    /// object on single-event <c>trackSchemaFromEvent</c> input and on sequence <c>track</c> steps.
     /// </summary>
     internal static class Program
     {
@@ -137,12 +139,14 @@ namespace Avo.Inspector.Conformance
                 properties = JsonInterop.ToPropertyMap(propsEl);
             }
             var streamId = input.ValueKind == JsonValueKind.Object ? GetString(input, "streamId") : null;
+            var options = ReadTrackOptions(input);
 
             object? actual;
             string outcome;
             try
             {
-                actual = await CallTrack(inspector, eventName ?? string.Empty, properties, streamId).ConfigureAwait(false);
+                actual = await CallTrack(inspector, eventName ?? string.Empty, properties, streamId, options)
+                    .ConfigureAwait(false);
                 outcome = "resolve";
             }
             catch (Exception ex)
@@ -177,7 +181,9 @@ namespace Avo.Inspector.Conformance
                             properties = JsonInterop.ToPropertyMap(propsEl);
                         }
                         var streamId = GetString(step, "streamId");
-                        var value = await CallTrack(inspector, eventName, properties, streamId).ConfigureAwait(false);
+                        var options = ReadTrackOptions(step);
+                        var value = await CallTrack(inspector, eventName, properties, streamId, options)
+                            .ConfigureAwait(false);
                         records.Add(new StepRecord("track", "resolve", value));
                         break;
                     }
@@ -243,12 +249,45 @@ namespace Avo.Inspector.Conformance
         }
 
         private static Task<IReadOnlyList<SchemaEntry>> CallTrack(
-            AvoInspector inspector, string eventName, IDictionary<string, object?>? properties, string? streamId)
+            AvoInspector inspector, string eventName, IDictionary<string, object?>? properties,
+            string? streamId, TrackOptions? options)
         {
-            // Omit the third argument when no streamId is provided (contract-correct arity).
+            if (options != null)
+            {
+                // runner-contract 1.1.0: with `options` present the harness always uses the
+                // four-parameter overload, passing null for an absent streamId (the SDK resolves
+                // it to "" exactly as the omitted third argument would).
+                return inspector.TrackSchemaFromEvent(eventName, properties, streamId, options);
+            }
+            // No `options` in the fixture: keep the pre-2.1.0 call shape — never a four-argument
+            // call with an empty TrackOptions — and omit the third argument when no streamId is
+            // provided (contract-correct arity).
             return streamId == null
                 ? inspector.TrackSchemaFromEvent(eventName, properties)
                 : inspector.TrackSchemaFromEvent(eventName, properties, streamId);
+        }
+
+        /// <summary>
+        /// Maps a fixture's optional <c>options</c> object (runner-contract 1.1.0; SPEC.md §4.2.1)
+        /// onto a <see cref="TrackOptions"/>. Values are copied <b>verbatim</b> — no trimming,
+        /// dropping, or coercion; normalization is the SDK's job and is exactly what the fixture
+        /// asserts. Returns <c>null</c> when the fixture carries no <c>options</c>, so the harness
+        /// makes the three-parameter call instead of passing an empty options object.
+        /// </summary>
+        private static TrackOptions? ReadTrackOptions(JsonElement element)
+        {
+            if (element.ValueKind != JsonValueKind.Object
+                || !element.TryGetProperty("options", out var options)
+                || options.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+            return new TrackOptions
+            {
+                OutputReference = GetString(options, "outputReference"),
+                OriginHint = GetString(options, "originHint"),
+                AppVersion = GetString(options, "appVersion")
+            };
         }
 
         // ----- construction + preconditions -----------------------------------------------------

@@ -13,20 +13,20 @@ namespace Avo.Inspector.Tests
 {
     /// <summary>
     /// Wire-shape and behavior matrix for <see cref="TrackOptions"/> / the fourth
-    /// <c>TrackSchemaFromEvent</c> parameter (AVO-3516/AVO-3543), per
-    /// <c>planning/gateway-track-options/spec.md</c>'s Proposed Design (the app-version decision
-    /// table and before/after wire body examples) and Test Plan.
+    /// <c>TrackSchemaFromEvent</c> parameter (AVO-3516/AVO-3543), per SPEC.md §4.2.1 and §7.3.6
+    /// (the normalization rules, the <c>appVersion</c> resolution table, and the omission and
+    /// property-name-collision rules), and mirroring conformance fixtures <c>wire-9</c> -
+    /// <c>wire-13</c> and <c>batch-7</c>.
     /// </summary>
     /// <remarks>
-    /// Every instance in this file is constructed with env <c>"staging"</c> (never <c>"dev"</c>,
-    /// and <c>EnableLogging(true)</c> is never called), matching the standard wire-body recipe in
-    /// the spec's "Existing Patterns to Follow." This keeps <c>_shouldLog == false</c> for every
-    /// test here, so none of them can set the process-wide (re-armed only via the internal test hook)
-    /// <c>_originHintWithoutAppVersionWarned</c> one-shot latch — even the rows below that satisfy
+    /// Every wire-shape test in this file constructs its instance with env <c>"staging"</c> (never
+    /// <c>"dev"</c>) and never calls <c>EnableLogging(true)</c>. That keeps <c>_shouldLog == false</c>
+    /// for all of them, so none can consume the process-wide (re-armed only via the internal test
+    /// hook) <c>_originHintWithoutAppVersionWarned</c> one-shot latch — even the rows that satisfy
     /// the warning's trigger condition (an <c>OriginHint</c> set without a usable
     /// <c>AppVersion</c>) merely resolve a JSON <c>null</c> <c>appVersion</c> without evaluating
-    /// the gated log call. The dedicated warning test lives elsewhere (STORY-005) and is the only
-    /// test in the suite that uses a <c>dev</c> instance for this feature.
+    /// the gated log call. The two warning tests at the bottom of this file are the only ones that
+    /// enable logging, and each re-arms the latch first so it cannot depend on execution order.
     /// </remarks>
     public class TrackOptionsTests
     {
@@ -205,7 +205,9 @@ namespace Avo.Inspector.Tests
         [InlineData(null, "5.1.0", "value", "5.1.0")]     // decision table row 3: originHint absent, appVersion set
         [InlineData(null, null, "constructor", null)]     // decision table row 4: both absent
         [InlineData("web", "   ", "null", null)]          // originHint set, appVersion whitespace-only -> null
+        [InlineData("web", "", "null", null)]             // originHint set, appVersion empty string -> null
         [InlineData(null, "   ", "constructor", null)]    // originHint absent, appVersion whitespace-only -> constructor fallback
+        [InlineData(null, "", "constructor", null)]       // originHint absent, appVersion empty string -> constructor fallback
         [InlineData(null, " 5.1.0 ", "value", "5.1.0")]   // originHint absent, padded appVersion -> trimmed override
         public async Task AppVersion_rule_matrix(
             string? originHint, string? appVersion, string expectedKind, string? expectedValue)
@@ -287,6 +289,52 @@ namespace Avo.Inspector.Tests
             }
         }
 
+        /// <summary>
+        /// SPEC.md §7.3.6: "An event property that happens to be named <c>outputReference</c>,
+        /// <c>originHint</c>, or <c>appVersion</c> is an ordinary property." Completes the
+        /// collision trio (conformance fixture <c>wire-13</c>) for the third name: a property
+        /// literally called <c>appVersion</c> stays in the schema with its own extracted type and
+        /// does NOT become the wire's top-level <c>appVersion</c>, which comes only from
+        /// <c>TrackOptions</c>.
+        /// </summary>
+        [Fact]
+        public async Task CustomerProperty_named_appVersion_stays_in_schema()
+        {
+            using var server = new TestInspectorServer();
+            using (new MockEndpointScope(server.BaseUrl))
+            {
+                var inspector = new AvoInspector("k", "staging", "1.4.2", batchSize: 1);
+
+                var schema = await inspector.TrackSchemaFromEvent(
+                    "E",
+                    Props.Of(("appVersion", true)),
+                    "s1",
+                    new TrackOptions { AppVersion = "5.1.0" });
+
+                Assert.Single(schema);
+                Assert.Equal("appVersion", schema[0].PropertyName);
+                Assert.Equal("boolean", schema[0].PropertyType); // the property's own type, untouched
+
+                var evt = FirstEvent(server);
+                // Top-level appVersion is the option's value, a string — not the boolean property.
+                var wireAppVersion = evt.GetProperty("appVersion");
+                Assert.Equal(JsonValueKind.String, wireAppVersion.ValueKind);
+                Assert.Equal("5.1.0", wireAppVersion.GetString());
+
+                // ...and the property itself still rides along inside eventProperties.
+                var wireProperty = evt.GetProperty("eventProperties").EnumerateArray().Single();
+                Assert.Equal("appVersion", wireProperty.GetProperty("propertyName").GetString());
+                Assert.Equal("boolean", wireProperty.GetProperty("propertyType").GetString());
+            }
+        }
+
+        /// <summary>
+        /// SPEC.md §7.3.6: the gateway fields are top-level siblings of <c>eventProperties</c>,
+        /// "never nested inside the schema". Asserted against the <b>wire</b> body's
+        /// <c>eventProperties</c> array (not the returned schema), because that is what the
+        /// backend actually receives — a serializer that appended the options to the schema on the
+        /// way out would still return a clean list to the caller.
+        /// </summary>
         [Fact]
         public async Task Options_never_leak_into_eventProperties()
         {
@@ -295,15 +343,25 @@ namespace Avo.Inspector.Tests
             {
                 var inspector = new AvoInspector("k", "staging", "1.0.0", batchSize: 1);
 
-                var schema = await inspector.TrackSchemaFromEvent(
+                await inspector.TrackSchemaFromEvent(
                     "E",
                     Props.Of(("amount", 9.99)),
                     "s1",
                     new TrackOptions { OutputReference = "meta-x7k2q", OriginHint = "web", AppVersion = "5.1.0" });
 
-                Assert.DoesNotContain(schema, e => e.PropertyName == "outputReference");
-                Assert.DoesNotContain(schema, e => e.PropertyName == "originHint");
-                Assert.DoesNotContain(schema, e => e.PropertyName == "appVersion");
+                var evt = FirstEvent(server);
+                var wirePropertyNames = evt.GetProperty("eventProperties").EnumerateArray()
+                    .Select(e => e.GetProperty("propertyName").GetString()).ToArray();
+
+                Assert.Equal(new[] { "amount" }, wirePropertyNames);
+                Assert.DoesNotContain("outputReference", wirePropertyNames);
+                Assert.DoesNotContain("originHint", wirePropertyNames);
+                Assert.DoesNotContain("appVersion", wirePropertyNames);
+
+                // ...and they are present exactly once each, as top-level siblings.
+                Assert.Equal("meta-x7k2q", evt.GetProperty("outputReference").GetString());
+                Assert.Equal("web", evt.GetProperty("originHint").GetString());
+                Assert.Equal("5.1.0", evt.GetProperty("appVersion").GetString());
             }
         }
 
@@ -484,6 +542,32 @@ namespace Avo.Inspector.Tests
             }
         }
 
+        /// <summary>
+        /// Mirror of <see cref="OutputReference_alone_leaves_appVersion_at_constructor_value_and_omits_originHint"/>
+        /// for the other coordinate, and of conformance fixture <c>wire-10</c>: with only
+        /// <c>OriginHint</c> set, the <c>outputReference</c> key MUST be absent from the wire body
+        /// entirely (SPEC.md §7.3.6 omission rule — never <c>null</c>, never <c>""</c>), the event
+        /// is source-scoped, and <c>appVersion</c> is a literal JSON <c>null</c> rather than the
+        /// constructor's version.
+        /// </summary>
+        [Fact]
+        public async Task OriginHint_alone_omits_outputReference_and_sends_null_appVersion()
+        {
+            using var server = new TestInspectorServer();
+            using (new MockEndpointScope(server.BaseUrl))
+            {
+                var inspector = new AvoInspector("k", "staging", "1.4.2", batchSize: 1);
+
+                await inspector.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1",
+                    new TrackOptions { OriginHint = "web" });
+
+                var evt = FirstEvent(server);
+                Assert.False(evt.TryGetProperty("outputReference", out _)); // key absent, not null/""
+                Assert.Equal("web", evt.GetProperty("originHint").GetString());
+                Assert.Equal(JsonValueKind.Null, evt.GetProperty("appVersion").ValueKind);
+            }
+        }
+
         [Fact]
         public async Task AppVersion_alone_omits_outputReference_and_originHint()
         {
@@ -499,6 +583,54 @@ namespace Avo.Inspector.Tests
                 Assert.Equal("5.1.0", evt.GetProperty("appVersion").GetString()); // unscoped override, trimmed
                 Assert.False(evt.TryGetProperty("outputReference", out _));
                 Assert.False(evt.TryGetProperty("originHint", out _));
+            }
+        }
+
+        /// <summary>
+        /// The primary multi-gate use case (SPEC.md §4.2.1: "Two calls for the same event with
+        /// different <c>outputReference</c> values are two distinct observations and MUST both be
+        /// sent (there is no deduplication in server SDKs)"; conformance fixture <c>batch-7</c>).
+        /// The two calls are identical apart from <c>OutputReference</c>, so a dedup/caching bug
+        /// would collapse them into one request — or, worse, reuse the first body's coordinate for
+        /// the second.
+        /// </summary>
+        [Fact]
+        public async Task Two_calls_differing_only_in_OutputReference_send_two_bodies_with_identical_eventProperties()
+        {
+            using var server = new TestInspectorServer();
+            using (new MockEndpointScope(server.BaseUrl))
+            {
+                var inspector = new AvoInspector("k", "staging", "1.4.2", batchSize: 1);
+                var properties = Props.Of(("amount", 9.99), ("currency", "EUR"));
+
+                await inspector.TrackSchemaFromEvent("Purchase Completed", properties, "s1",
+                    new TrackOptions { OutputReference = "meta-x7k2q" });
+                await inspector.TrackSchemaFromEvent("Purchase Completed", properties, "s1",
+                    new TrackOptions { OutputReference = "ga4-z9k1p" });
+
+                Assert.Equal(2, server.RequestCount); // nothing deduplicated
+
+                var first = FirstEvent(server, 0);
+                var second = FirstEvent(server, 1);
+
+                // Each observation carries its own outputReference...
+                Assert.Equal("meta-x7k2q", first.GetProperty("outputReference").GetString());
+                Assert.Equal("ga4-z9k1p", second.GetProperty("outputReference").GetString());
+
+                // ...over byte-identical eventProperties, and everything else about the two bodies
+                // matches too (same event name, stream, and constructor appVersion).
+                Assert.Equal(
+                    first.GetProperty("eventProperties").GetRawText(),
+                    second.GetProperty("eventProperties").GetRawText());
+                Assert.Equal("Purchase Completed", second.GetProperty("eventName").GetString());
+                Assert.Equal("s1", second.GetProperty("streamId").GetString());
+                Assert.Equal("1.4.2", first.GetProperty("appVersion").GetString());
+                Assert.Equal("1.4.2", second.GetProperty("appVersion").GetString());
+
+                // Distinct observations, so distinct messageIds.
+                Assert.NotEqual(
+                    first.GetProperty("messageId").GetString(),
+                    second.GetProperty("messageId").GetString());
             }
         }
 
@@ -549,15 +681,15 @@ namespace Avo.Inspector.Tests
         /// Covers the gated, one-shot <c>Logger.Error</c> warning added in <c>BuildWireEvent</c>
         /// for decision-table row 2 (<c>OriginHint</c> set, resolved <c>appVersion</c> null), and
         /// its process-wide <c>_originHintWithoutAppVersionWarned</c> latch (re-armed only via the
-        /// internal <c>ResetOriginHintWarningLatchForTesting</c> hook). This is
-        /// the ONLY test in the whole feature's matrix allowed to construct a <c>dev</c> instance
-        /// or leave logging enabled — every other test in <c>TrackOptionsTests.cs</c> uses
-        /// <c>staging</c> specifically so it cannot consume this latch out of order (see this
-        /// file's class remarks and <c>planning/gateway-track-options/spec.md</c>'s Test Plan
-        /// leading note). Steps run in a fixed order within this single method: the latch is
-        /// process-wide, so a second, independent test method touching the same trigger condition
-        /// would create an undocumented, execution-order-dependent coupling xunit does not
-        /// guarantee against.
+        /// internal <c>ResetOriginHintWarningLatchForTesting</c> hook). This is the only test in the
+        /// feature's matrix that constructs a <c>dev</c> instance — every wire-shape test in
+        /// <c>TrackOptionsTests.cs</c> uses <c>staging</c> specifically so it cannot consume this
+        /// latch out of order (see this file's class remarks); the one other test that touches the
+        /// latch, the concurrency test below, re-arms it first for the same reason. SPEC.md §7.3.6
+        /// SHOULDs this warning and requires that it never carry the option values. The four steps
+        /// run in a fixed order within this single method: the latch is process-wide, so splitting
+        /// them into separate test methods would create an undocumented, execution-order-dependent
+        /// coupling xunit does not guarantee against.
         /// </summary>
         [Fact]
         public async Task OriginHint_without_usable_AppVersion_logs_gated_warning_once_matching_shouldLog_flag()
@@ -614,10 +746,16 @@ namespace Avo.Inspector.Tests
                 Assert.Equal(1, CountOccurrences(console.Output, WarningText)); // still only step 0/1's line
 
                 // (3) decision table rows 1/3/4 (AppVersion non-blank, or OriginHint absent) never
-                // satisfy the trigger condition, so no additional warning is written on the dev
-                // instance. Note: constructing the staging instance in step (2) reset the
-                // process-wide _shouldLog flag to false, so logging is off here; these rows fail
-                // the trigger condition's earlier clauses regardless of the flag.
+                // satisfy the trigger condition, so no warning is written even with BOTH gates wide
+                // open. Both are re-opened first, deliberately: the latch was consumed in step (0)
+                // and constructing the staging instance in step (2) turned the process-wide
+                // _shouldLog flag back off, so asserting "nothing new was logged" without re-arming
+                // them would pass no matter what these rows did.
+                AvoInspector.ResetOriginHintWarningLatchForTesting();
+                dev.EnableLogging(true);
+                Assert.True(AvoInspector.ShouldLogForTesting);
+
+                var beforeNonTriggeringCalls = console.Output;
                 var nonTriggeringOptions = new[]
                 {
                     new TrackOptions { OriginHint = "web", AppVersion = "5.1.0" }, // row 1
@@ -629,7 +767,18 @@ namespace Avo.Inspector.Tests
                     await dev.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1", options);
                 }
 
-                Assert.Equal(1, CountOccurrences(console.Output, WarningText));
+                Assert.Equal(beforeNonTriggeringCalls, console.Output); // nothing new written
+                Assert.Equal(1, CountOccurrences(console.Output, WarningText)); // still step 0's line
+
+                // (4) proves step (3)'s arrangement was live rather than vacuous: with the very
+                // same re-armed latch and enabled logging, one genuinely triggering call on the
+                // same instance immediately writes a SECOND warning line. If either gate had been
+                // silently shut, this assertion would fail and step (3) would be meaningless.
+                await dev.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1",
+                    new TrackOptions { OutputReference = "meta-x7k2q", OriginHint = "web" });
+
+                Assert.Equal(2, CountOccurrences(console.Output, WarningText));
+                Assert.DoesNotContain("meta-x7k2q", console.Output);
 
                 // The latch is only re-armed by the test hook, but _shouldLog is process-wide and mutable — restore
                 // it to the suite's default (off) so no later test observes logging left enabled.

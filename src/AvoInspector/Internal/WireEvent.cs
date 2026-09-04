@@ -8,21 +8,22 @@ namespace Avo.Inspector.Internal
     /// JSON array of these.
     /// </summary>
     /// <remarks>
-    /// <para><b>Deliberate divergence from SPEC.md §3.3/§7.3.1.</b> The spec says <c>sessionId</c>
-    /// MUST NOT be sent, but the live Inspector ingestion pipeline silently <i>drops</i> events that
-    /// omit <c>sessionId</c> (the request still returns <c>200 {"success":true}</c>, yet the event
-    /// never appears on the dashboard). The canonical browser SDK (<c>js-avo-inspector</c>) always
-    /// sends <c>sessionId: ""</c>. Verified empirically by field-bisection against the live API:
-    /// adding only <c>sessionId: ""</c> to an otherwise spec-shaped body is necessary and sufficient
-    /// for ingestion; <c>trackingId</c>/<c>eventId</c>/<c>eventHash</c>/<c>avoFunction</c> are not.
-    /// We therefore emit <c>sessionId: ""</c> and continue to omit <c>trackingId</c>/<c>visitorId</c>/
-    /// <c>userId</c> (which are not required).</para>
-    /// <para><b>Gateway extension (AVO-3516 / AVO-3543), not part of
-    /// <c>avohq/spec-first-inspector-server-sdk</c> v1.0.0.</b> <see cref="OutputReference"/> and
-    /// <see cref="OriginHint"/> are Avo-contract additions for gateway-scoped API keys (see
-    /// <see cref="TrackOptions"/>). <see cref="AppVersion"/> is therefore also nullable — with
-    /// <c>originHint</c> set and no usable per-event app version, <c>appVersion</c> is sent as a
-    /// literal JSON <c>null</c> rather than falling back to the instance's configured version.</para>
+    /// <para><b><c>sessionId</c> (SPEC.md §3.3).</b> Every event carries <c>sessionId: ""</c>, which
+    /// the spec has REQUIRED of server SDKs since v2.0.0: the live Inspector ingestion pipeline
+    /// silently <i>drops</i> events that omit <c>sessionId</c> (the request still returns
+    /// <c>200 {"success":true}</c>, yet the event never appears on the dashboard). Verified
+    /// empirically by field-bisection against the live API: adding only <c>sessionId: ""</c> to an
+    /// otherwise spec-shaped body is necessary and sufficient for ingestion;
+    /// <c>trackingId</c>/<c>eventId</c>/<c>eventHash</c>/<c>avoFunction</c> are not. This SDK is
+    /// therefore conformant, not divergent — it emits <c>sessionId: ""</c> and omits
+    /// <c>trackingId</c>/<c>visitorId</c>/<c>userId</c>, as SPEC.md §3.3 requires.</para>
+    /// <para><b>Gateway coordinate fields (SPEC.md §4.2.1 / §7.3.6, spec v2.1.0; AVO-3516 /
+    /// AVO-3543).</b> <see cref="OutputReference"/> and <see cref="OriginHint"/> are OPTIONAL
+    /// top-level siblings of <c>eventProperties</c> for gateway-scoped API keys (see
+    /// <see cref="TrackOptions"/>), omitted entirely when absent. <see cref="AppVersion"/> is
+    /// therefore also nullable — per the §7.3.6 resolution table, with <c>originHint</c> set and no
+    /// usable per-event app version, <c>appVersion</c> is sent as a literal JSON <c>null</c> rather
+    /// than falling back to the instance's configured version.</para>
     /// </remarks>
     internal sealed class WireEvent
     {
@@ -34,7 +35,7 @@ namespace Avo.Inspector.Internal
         [JsonPropertyName("libPlatform")] public string LibPlatform { get; set; } = string.Empty;
         [JsonPropertyName("messageId")] public string MessageId { get; set; } = string.Empty;
         [JsonPropertyName("streamId")] public string StreamId { get; set; } = string.Empty;
-        // Required by the live backend for ingestion despite SPEC.md §3.3 (see class remarks).
+        // REQUIRED on the wire as "" for server SDKs (SPEC.md §3.3; see class remarks).
         [JsonPropertyName("sessionId")] public string SessionId { get; set; } = string.Empty;
         [JsonPropertyName("createdAt")] public string CreatedAt { get; set; } = string.Empty;
         [JsonPropertyName("samplingRate")] public double SamplingRate { get; set; }
@@ -43,7 +44,7 @@ namespace Avo.Inspector.Internal
         [JsonPropertyName("eventProperties")] public IReadOnlyList<SchemaEntry> EventProperties { get; set; }
             = new List<SchemaEntry>();
 
-        // Gateway extension (AVO-3516 / AVO-3543, see class remarks). Individually
+        // Gateway coordinate fields (SPEC.md §7.3.6, see class remarks). Individually
         // JsonIgnore'd rather than a global DefaultIgnoreCondition, so appVersion: null above
         // remains serialized.
         [JsonPropertyName("outputReference")]

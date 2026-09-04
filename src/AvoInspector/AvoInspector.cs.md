@@ -121,8 +121,9 @@ public Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(
 Pipeline: extract schema → resolve stream id → apply per-event sampling → enqueue into the pending
 batch → dispatch a send when a flush trigger fires.
 
-- **`options` (`TrackOptions`, AVO-3516/AVO-3543 — gateway extension, not part of
-  `avohq/spec-first-inspector-server-sdk` v1.0.0):** supplied through the four-parameter overload;
+- **`options` (`TrackOptions`, SPEC.md §4.2.1 / §7.3.6 — spec v2.1.0's gateway track options;
+  AVO-3516/AVO-3543):** supplied through the four-parameter overload that §4.2.1 prescribes for
+  languages without optional trailing parameters;
   the retained three-parameter overload passes `null`, so every existing call site — source or
   precompiled — keeps compiling, binding, and behaving identically. Threaded
   unchanged into `BuildWireEvent`; its properties are only inspected there (see "Wire event
@@ -157,15 +158,15 @@ Each event becomes a `WireEvent` carrying: `apiKey`, `appName`, `appVersion`,
 `libVersion`/`libPlatform` (from `InspectorVersion`), `env` wire string, a fresh lowercase UUID v4
 `messageId`, `streamId`, a UTC `createdAt` formatted `yyyy-MM-dd'T'HH:mm:ss.fff'Z'` (invariant
 culture), the sampling-rate snapshot, `type = "event"`, the event name (null → `""`), and the
-extracted schema as `eventProperties` — plus, since this SDK's 1.1.0, the gateway extension fields
-below (AVO-3516/AVO-3543).
+extracted schema as `eventProperties` — plus, since this SDK's 1.1.0, the gateway coordinate fields
+below (SPEC.md §7.3.6; AVO-3516/AVO-3543).
 
-**Gateway extension fields.** `options?.OutputReference`, `options?.OriginHint`, and
+**Gateway coordinate fields (SPEC.md §7.3.6).** `options?.OutputReference`, `options?.OriginHint`, and
 `options?.AppVersion` are each normalized by `NormalizeHint(string?)` — same shape as
 `ResolveStreamId`, but trims and returns `null` (omit the wire key) for `null`/`""`/whitespace-only
 instead of `""`, and never logs. `outputReference`/`originHint` are set on the `WireEvent` as-is
 (omitted on the wire when `null`, via `WireEvent`'s per-property `[JsonIgnore]`). `appVersion`
-resolves per this decision table (the one place this rule is stated):
+resolves per SPEC.md §7.3.6's table, restated here:
 
 | `OriginHint` (normalized) | `AppVersion` (normalized) | wire `appVersion` |
 |---|---|---|
@@ -178,8 +179,10 @@ With `options == null` or an empty `new TrackOptions()`, every field above norma
 the wire body carries exactly the 1.0.0 key set and values (no `outputReference`/`originHint` keys,
 `appVersion` = the constructor value); the only difference from a 1.0.0 body is `libVersion`.
 
-**One-shot gated warning.** When `originHint != null && resolvedAppVersion == null` (decision-table
-row 2 — the current v1 backend silently drops this event, AVO-3543) and `_shouldLog` is `true`,
+**One-shot gated warning (SPEC.md §7.3.6 SHOULD).** When `originHint != null && resolvedAppVersion
+== null` (decision-table row 2 — the current v1 backend silently drops this event, AVO-3543) and
+`_shouldLog` is `true` (the `dev` default or an explicit `EnableLogging(true)`; the warning is
+silent otherwise),
 `BuildWireEvent` claims the latch with `Interlocked.CompareExchange(ref latch, 1, 0) == 0` as the
 last operand of the condition, and only the single caller that wins the exchange calls
 `Logger.Error` with a fixed message string (never the field values). This caps the warning at

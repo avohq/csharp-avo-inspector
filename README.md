@@ -1,6 +1,6 @@
 # Avo Inspector — C# / .NET SDK
 
-> Implements [`avohq/spec-first-inspector-server-sdk`](https://github.com/avohq/spec-first-inspector-server-sdk) **v1.0.0**
+> Implements [`avohq/spec-first-inspector-server-sdk`](https://github.com/avohq/spec-first-inspector-server-sdk) **v2.1.0**
 
 A server-side SDK for [Avo Inspector](https://www.avo.app/). It extracts a type
 schema from the properties of the analytics events your backend sends, and reports
@@ -10,8 +10,8 @@ reaches production.
 It is **server-side only**: no browser, no session/visitor tracking, no persistent
 storage. All state is in memory.
 
-- ✅ Passes all 30 fixtures of the official conformance suite (schema-extraction,
-  wire-protocol, error-handling, batching).
+- ✅ Passes all 36 fixtures of the spec v2.1.0 conformance suite (schema-extraction,
+  wire-protocol, error-handling, batching) — see [Conformance](#conformance).
 - ✅ Thread-safe; safe for concurrent use on multi-threaded servers.
 - ✅ Batching with size + time/idle flush triggers, bounded queue, and gzip.
 - ✅ Multi-targets `netstandard2.0` and `net8.0` (works on .NET Framework 4.6.2+,
@@ -103,9 +103,10 @@ For `--live`, set `AVO_INSPECTOR_API_KEY` (and optionally `AVO_INSPECTOR_ENV=dev
 
 Avo Inspector is moving to a multi-gate model: one Inspector API key per *gateway* (a
 server-side proxy or event bus checkpoint) rather than one Inspector source per
-individual destination. `TrackSchemaFromEvent` accepts an optional trailing
-four-parameter overload with a trailing `TrackOptions? options` argument that lets a gateway-scoped key tell
-observations taken at different checkpoints, and from different upstream sources, apart.
+individual destination. To support that, `TrackSchemaFromEvent` has a **four-parameter
+overload** whose trailing `TrackOptions? options` argument lets a gateway-scoped key tell
+observations taken at different checkpoints, and from different upstream sources, apart
+(SPEC.md §4.2.1; the wire mapping is §7.3.6).
 
 ```csharp
 using Avo.Inspector;
@@ -126,7 +127,8 @@ await inspector.TrackSchemaFromEvent(
 > Until the backend change tracked in AVO-3543 ships, always pair `OriginHint` with a non-blank
 > `AppVersion` as above. `OriginHint` without `AppVersion` is a valid call per the contract, but
 > the current `/inspector/v1/track` endpoint silently drops that event — see the **Backend note**
-> further down.
+> further down. The SDK warns once per process about that combination, but **only when logging is
+> enabled** (the `Dev` default, or an explicit `EnableLogging(true)`); it is silent otherwise.
 
 `TrackOptions` has three `string?` properties, all optional and independent — set any
 combination:
@@ -139,18 +141,18 @@ combination:
 
 All three values are trimmed before sending; empty or whitespace-only values are treated
 as absent, and `OutputReference`/`OriginHint` are then omitted from the wire body
-entirely rather than sent as `null` or `""`. The original three-parameter overload is
-retained unchanged (source- and binary-compatible with 1.0.0) and delegates with
+entirely rather than sent as `null` or `""` (SPEC.md §7.3.6). The original three-parameter
+overload is retained unchanged (source- and binary-compatible with 1.0.0) and delegates with
 `options: null`; that call, or an empty `new TrackOptions()`, produces a wire body with
 exactly the 1.0.0 key set and values — only `libVersion` differs. In the four-parameter
 overload both `streamId` and `options` are required, so pass `streamId: null` when you
 have no stream id; this keeps two- and three-argument calls binding unambiguously.
 
-> A customer's own event property literally named `outputReference` or `originHint`
-> (with unrelated business meaning) is unaffected. It still appears inside
-> `eventProperties` exactly as before — the top-level `outputReference`/`originHint`
-> fields described here come only from `TrackOptions`, never from event data, and
-> neither direction leaks into the other.
+> A customer's own event property literally named `outputReference`, `originHint`, or
+> `appVersion` (with unrelated business meaning) is unaffected — SPEC.md §7.3.6 calls it
+> "an ordinary property". It still appears inside `eventProperties` with its own extracted
+> type, exactly as before, and the top-level fields described here come only from
+> `TrackOptions`, never from event data; neither direction leaks into the other.
 
 ### Origin hint
 
@@ -176,6 +178,14 @@ the wire:
 > **silently dropped** — the HTTP response is still `200`, but the event never reaches
 > the Inspector dashboard. Track this at AVO-3543; a follow-up backend ticket must land
 > before `OriginHint` can be used safely without an `AppVersion` override.
+>
+> What this SDK puts on the wire is already the SPEC.md §7.3.6 shape, so nothing here has
+> to change when the parser catches up — those events simply start arriving. As §7.3.6
+> recommends, the SDK also logs **one** warning per process the first time it resolves an
+> `appVersion` of `null`, so the gap is visible in development. That warning is written to
+> `stderr` **only while logging is enabled** — on by default in `Dev`, or via
+> `EnableLogging(true)` — and the SDK is completely silent about it otherwise (it never
+> logs the option values themselves).
 
 ---
 
@@ -253,7 +263,8 @@ used unchanged; an absent or empty value becomes `""` on the wire.
 `options` carries optional per-call gateway coordinates (`OutputReference`, `OriginHint`)
 and a per-event `AppVersion` override — see "Gateways" above for the full behavior and
 the app-version resolution table. Omitting `options` (or passing an empty
-`new TrackOptions()`) produces a wire body identical to before this parameter existed.
+`new TrackOptions()`) produces a wire body with exactly the 1.0.0 key set and values —
+only `libVersion` differs.
 
 ### `IReadOnlyList<SchemaEntry> ExtractSchema(IDictionary<string, object?>? eventProperties)`
 
@@ -337,20 +348,20 @@ body. Certificate validation always uses the platform default and cannot be disa
 `AVO_INSPECTOR_MOCK_ENDPOINT` redirects requests to a test endpoint, but is **fail-closed**:
 a `Prod` instance ignores it unconditionally, so production traffic can never be redirected.
 
-> **`sessionId` (deliberate spec divergence).** Every event carries `sessionId: ""`. Spec
-> v1.0.0 §3.3/§7.3.1 told SDKs to *omit* `sessionId`, but the live Inspector ingestion pipeline
-> silently **drops** events that omit it (the request still returns `200 {"success":true}`, yet
-> nothing reaches the dashboard). Verified by field-bisection against the live API: adding only
-> `sessionId: ""` is necessary and sufficient to ingest. The spec is being corrected in
-> [avohq/spec-first-inspector-server-sdk#2](https://github.com/avohq/spec-first-inspector-server-sdk/pull/2)
-> (`sessionId` becomes a required wire field, empty string for server SDKs); this SDK already
-> implements that. `trackingId`/`visitorId`/`userId` remain absent.
+> **`sessionId`.** Every event carries `sessionId: ""`, which
+> [SPEC.md §3.3](https://github.com/avohq/spec-first-inspector-server-sdk/blob/main/SPEC.md)
+> has REQUIRED of server SDKs since spec v2.0.0: the live Inspector ingestion pipeline silently
+> **drops** events that omit it (the request still returns `200 {"success":true}`, yet nothing
+> reaches the dashboard). Verified by field-bisection against the live API: adding only
+> `sessionId: ""` is necessary and sufficient to ingest. Server SDKs do not model end-user
+> sessions, so the value is always the empty string. `trackingId`/`visitorId`/`userId` remain
+> absent, as §3.3 requires.
 
-> **Gateway fields.** Since 1.1.0 an event may also carry two optional top-level siblings of
-> `eventProperties` — `outputReference` and `originHint` — and `appVersion` may be a literal JSON
-> `null` when `originHint` is set without a per-event app version. Both are omitted entirely when
-> not provided, so a call without `TrackOptions` produces the 1.0.0 body unchanged. See
-> [Gateways](#gateways).
+> **Gateway fields (SPEC.md §7.3.6).** Since 1.1.0 an event may also carry two optional top-level
+> siblings of `eventProperties` — `outputReference` and `originHint` — and `appVersion` may be a
+> literal JSON `null` when `originHint` is set without a per-event app version. Both keys are
+> omitted entirely when not provided, so a call without `TrackOptions` produces a body with exactly
+> the 1.0.0 key set and values — only `libVersion` differs. See [Gateways](#gateways).
 
 ---
 
@@ -364,17 +375,26 @@ always performed outside the lock.
 
 ## Conformance
 
-This SDK ships a thin CLI harness (`AvoInspector.Conformance`) implementing the
-[runner contract](https://github.com/avohq/spec-first-inspector-server-sdk/blob/main/conformance/runner-contract.md).
-To run the official suite against it:
+This SDK ships a thin CLI harness (`AvoInspector.Conformance`) implementing version **1.1.0** of the
+[runner contract](https://github.com/avohq/spec-first-inspector-server-sdk/blob/gateway-track-options/conformance/runner-contract.md)
+— it forwards a fixture's `options` object verbatim to the four-parameter overload, and omits the
+argument entirely when the fixture has none. To run the official suite against it:
 
 ```sh
 ./scripts/run-conformance.sh
 ```
 
 The script builds the harness, fetches the spec repo (which hosts the language-agnostic
-suite-runner + mock server), and runs all 30 fixtures. The vendored fixtures under
-`conformance/fixtures/` also back a self-contained `dotnet test` run.
+suite-runner + mock server), and runs its fixtures. It defaults to `SPEC_REF=main`, which is
+spec 2.0.0 — 30 fixtures. Spec **2.1.0**, the version this SDK implements, is still open as
+avohq spec PR #3, so to run the six gateway fixtures (`wire-9`…`wire-13`, `batch-7`) as well:
+
+```sh
+SPEC_REF=gateway-track-options ./scripts/run-conformance.sh   # 36/36
+```
+
+The vendored fixtures under `conformance/fixtures/` (a snapshot of the spec's `main` suite) also
+back a self-contained `dotnet test` run.
 
 ```sh
 dotnet test       # unit tests + the 13 schema-extraction golden fixtures
@@ -387,8 +407,11 @@ dotnet test       # unit tests + the 13 schema-extraction golden fixtures
 - **Bump `InspectorVersion.LibVersion`** (in `src/AvoInspector/InspectorVersion.cs`) and
   the `<Version>` in the `.csproj` on every release. It is sent on the wire as `libVersion`
   and MUST be a plain SemVer string with no suffix.
-- `InspectorVersion.SpecVersion` records the spec contract version this SDK implements.
-  When a new `[WIRE]`-tagged spec release appears, regenerate/update and bump it.
+- `InspectorVersion.SpecVersion` records the spec contract version this SDK implements
+  (currently `2.1.0`), and `InspectorVersion.HarnessContractVersion` the conformance runner
+  contract its harness implements (currently `1.1.0`). When a new `[WIRE]`-tagged spec release
+  appears, regenerate/update and bump them, along with `<AvoInspectorSpecVersion>` and the
+  `Description` in `AvoInspector.csproj` and the badge at the top of this README.
 
 ### Publishing a release (one tag to publish)
 

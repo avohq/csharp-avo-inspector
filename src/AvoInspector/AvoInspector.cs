@@ -259,8 +259,10 @@ namespace Avo.Inspector
 
         /// <summary>
         /// Gateway-aware overload of <see cref="TrackSchemaFromEvent(string, IDictionary{string, object}, string)"/>
-        /// (AVO-3516 / AVO-3543): identical behavior, plus per-call <see cref="TrackOptions"/>.
-        /// Both trailing parameters are required so that two- and three-argument calls always bind
+        /// (SPEC.md §4.2.1 / §7.3.6; AVO-3516 / AVO-3543): identical behavior, plus per-call
+        /// <see cref="TrackOptions"/>. SPEC.md §4.2.1 asks languages without optional trailing
+        /// parameters to keep the three-parameter signature and add a four-parameter overload, so
+        /// both trailing parameters here are required and two- and three-argument calls always bind
         /// unambiguously to the 1.0.0 overload; pass <c>streamId: null</c> when no stream applies.
         /// </summary>
         /// <param name="eventName">The tracked event name.</param>
@@ -454,8 +456,9 @@ namespace Avo.Inspector
             return string.Empty;
         }
 
+        // SPEC.md §7.3.6 normalization: trim, then treat absent/empty/whitespace-only as absent.
         // Same shape as ResolveStreamId, but returns null (omit the wire key) instead of "" and
-        // never logs — used for the gateway-extension hint/version fields (AVO-3516/AVO-3543).
+        // never logs — used for the gateway coordinate/version fields (AVO-3516/AVO-3543).
         private static string? NormalizeHint(string? value)
         {
             if (string.IsNullOrEmpty(value))
@@ -477,8 +480,8 @@ namespace Avo.Inspector
             var originHint = NormalizeHint(options?.OriginHint);
             var normalizedAppVersion = NormalizeHint(options?.AppVersion);
 
-            // App version resolution — see the decision table in TrackOptions.AppVersion's XML doc
-            // and the spec's Proposed Design.
+            // App version resolution — SPEC.md §7.3.6's appVersion table, restated in
+            // TrackOptions.AppVersion's XML doc.
             var resolvedAppVersion = originHint != null
                 ? normalizedAppVersion                 // source-scoped: instance version never applies
                 : normalizedAppVersion ?? _appVersion;  // unscoped: override when provided, else fall back
@@ -487,7 +490,8 @@ namespace Avo.Inspector
                 _shouldLog &&
                 Interlocked.CompareExchange(ref _originHintWithoutAppVersionWarned, 1, 0) == 0)
             {
-                // The current v1 backend silently drops this event (AVO-3543). Gated on the same
+                // SPEC.md §7.3.6 SHOULDs a one-time warning here: the current v1 backend silently
+                // drops this event (AVO-3543). Gated on the same
                 // process-wide _shouldLog flag every other Logger.Error call in this file already
                 // uses, AND capped at one line for the life of the process via the atomic latch
                 // claim above — unlike ResolveStreamId's ':' warning, this condition can hold on
