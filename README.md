@@ -397,10 +397,8 @@ PR, so point `SPEC_REF` at it to run the full suite — the six gateway fixtures
 SPEC_REF=gateway-track-options ./scripts/run-conformance.sh   # 36/36
 ```
 
-The header fixtures need no harness change: the suite drives the SDK through
-`AVO_INSPECTOR_MOCK_ENDPOINT`, and the runner records request headers itself and asserts them via
-a fixture's `expected_request_headers`. `wire-1` pins `env: dev` while `batch-1` pins
-`env: staging` on that same header, so an SDK that hardcodes either value fails one of the two.
+Of the header assertions, `wire-1` pins `env: dev` while `batch-1` pins `env: staging` on that same
+header, so an SDK that hardcodes either value fails one of the two.
 
 The vendored fixtures under `conformance/fixtures/` (a snapshot of the spec's `main` suite) also
 back a self-contained `dotnet test` run.
