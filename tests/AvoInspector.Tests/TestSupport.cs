@@ -28,9 +28,10 @@ namespace Avo.Inspector.Tests
     /// <summary>
     /// Redirects <see cref="Console.Error"/> to an in-memory buffer for the scope's lifetime,
     /// restoring the original writer on dispose. Mirrors <see cref="MockEndpointScope"/>'s
-    /// constructor/dispose shape. Used only by the gated one-shot warning test — no other test in
-    /// the suite asserts on stderr content (see <c>LoggingTests.cs</c>, which asserts only the
-    /// <c>_shouldLog</c> flag via <c>AvoInspector.ShouldLogForTesting</c>).
+    /// constructor/dispose shape. Used only by the test that pins gateway options as silent on
+    /// <c>/inspector/v2/track</c> — no other test in the suite asserts on stderr content (see
+    /// <c>LoggingTests.cs</c>, which asserts only the <c>_shouldLog</c> flag via
+    /// <c>AvoInspector.ShouldLogForTesting</c>).
     /// </summary>
     internal sealed class ConsoleErrorScope : IDisposable
     {

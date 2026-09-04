@@ -23,7 +23,7 @@ namespace Avo.Inspector
     /// </remarks>
     public sealed class AvoInspector
     {
-        private const string ProductionEndpoint = "https://api.avo.app/inspector/v1/track";
+        private const string ProductionEndpoint = "https://api.avo.app/inspector/v2/track";
         private const string MockEndpointEnvVar = "AVO_INSPECTOR_MOCK_ENDPOINT";
         private const int DefaultFlushTimeoutMs = 10_000; // SPEC.md §4.6
 
@@ -36,15 +36,6 @@ namespace Avo.Inspector
         // Process-wide logging flag (SPEC.md §4.4). Volatile so a write on one instance is visible
         // to reads on all instances across threads.
         private static volatile bool _shouldLog;
-
-        // One-shot, process-wide latch for the originHint-without-usable-AppVersion warning
-        // (AVO-3543). Static for the same reason as _shouldLog: a per-instance field would still
-        // allow unbounded stderr volume from a caller constructing many short-lived instances.
-        // An int (0 = not yet warned, 1 = warned) so the claim is an atomic
-        // Interlocked.CompareExchange: exactly one caller wins even under concurrent triggering
-        // calls. Claimed only on the branch that actually writes the warning; never reset outside
-        // the internal test hook.
-        private static int _originHintWithoutAppVersionWarned;
 
         private readonly object _lock = new object();
 
@@ -486,34 +477,11 @@ namespace Avo.Inspector
                 ? normalizedAppVersion                 // source-scoped: instance version never applies
                 : normalizedAppVersion ?? _appVersion;  // unscoped: override when provided, else fall back
 
-            if (originHint != null && resolvedAppVersion == null)
-            {
-                // SPEC.md §7.3.6 SHOULDs a one-time warning here: the current v1 backend silently
-                // drops this event (AVO-3543). Gated on the same process-wide _shouldLog flag every
-                // other Logger.Error call in this file already uses, AND capped at one line for the
-                // life of the process via the atomic latch claim below — unlike ResolveStreamId's
-                // ':' warning, this condition can hold on every call of a healthy, spec-compliant
-                // gateway integration.
-                //
-                // _shouldLog is static volatile and every constructor writes it (Dev => true), as
-                // does EnableLogging. So it is read exactly ONCE here and the snapshot drives both
-                // the claim and the write: reading it a second time at the Logger.Error call would
-                // let a concurrent non-Dev constructor or EnableLogging(false) land in between and
-                // turn a successful claim into a silent no-op, burning the one-shot latch so that
-                // no later call could ever emit the warning. Claiming last still keeps the latch
-                // untouched while logging is off, and concurrent triggering calls cannot each win
-                // the CompareExchange.
-                var shouldLogWarning = _shouldLog;
-                if (shouldLogWarning &&
-                    Interlocked.CompareExchange(ref _originHintWithoutAppVersionWarned, 1, 0) == 0)
-                {
-                    // Fixed message string only: never logs OutputReference/OriginHint/AppVersion
-                    // values (SPEC.md §7.3.6 MUST).
-                    Logger.Error(shouldLogWarning, "originHint set without a usable AppVersion; " +
-                        "this event's appVersion will be sent as null, which the current v1 backend " +
-                        "silently drops (AVO-3543).");
-                }
-            }
+            // No warning is emitted for originHint-without-AppVersion. It is a normal, fully
+            // supported call: /inspector/v2/track decodes both gateway coordinates and stores a
+            // null appVersion as "unversioned". The one-shot stderr warning this SDK carried
+            // before existed only because /inspector/v1/track discarded the coordinates and
+            // dropped null-appVersion events outright.
 
             return new WireEvent
             {
@@ -599,7 +567,10 @@ namespace Avo.Inspector
         private async Task<SendResult> SendBatchAsync(WireEvent[] batch)
         {
             var endpoint = ResolveEndpoint();
-            var result = await InspectorHttpSender.SendAsync(endpoint, batch, _shouldLog, _cts.Token).ConfigureAwait(false);
+            // apiKey and env travel as request headers (SPEC.md §7.2) as well as in each event body.
+            var result = await InspectorHttpSender
+                .SendAsync(endpoint, _apiKey, _envWire, batch, _shouldLog, _cts.Token)
+                .ConfigureAwait(false);
             if (result.Status == SendStatus.Ok && result.NewSamplingRate.HasValue)
             {
                 // SPEC.md §7.4/§7.7 — update samplingRate only on 200, under the lock.
@@ -663,15 +634,5 @@ namespace Avo.Inspector
         internal string ResolvedEndpointForTesting() => ResolveEndpoint();
 
         internal static bool ShouldLogForTesting => _shouldLog;
-
-        /// <summary>
-        /// Test-only hook that re-arms the process-wide originHint-without-AppVersion warning latch
-        /// so tests of the warning are independent of execution order. Intentionally
-        /// <c>internal</c>: production code never resets it.
-        /// </summary>
-        internal static void ResetOriginHintWarningLatchForTesting()
-        {
-            Interlocked.Exchange(ref _originHintWithoutAppVersionWarned, 0);
-        }
     }
 }

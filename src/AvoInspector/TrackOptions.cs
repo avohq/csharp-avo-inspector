@@ -7,10 +7,11 @@ namespace Avo.Inspector
     /// </summary>
     /// <remarks>
     /// <para>
-    /// This is the <c>TrackOptions</c> record of <c>avohq/spec-first-inspector-server-sdk</c>
-    /// v2.1.0: the OPTIONAL trailing <c>options</c> parameter of SPEC.md §4.2.1, whose
-    /// normalization and wire mapping are normative in SPEC.md §7.3.6 (AVO-3516 / AVO-3543).
-    /// Conformance fixtures <c>wire-9</c>-<c>wire-13</c> and <c>batch-7</c> gate this behavior.
+    /// This is the <c>TrackOptions</c> record of <c>avohq/spec-first-inspector-server-sdk</c>:
+    /// the OPTIONAL trailing <c>options</c> parameter of SPEC.md §4.2.1, whose normalization and
+    /// wire mapping are normative in SPEC.md §7.3.6 (AVO-3516). Conformance fixtures
+    /// <c>wire-9</c>-<c>wire-13</c> and <c>batch-7</c> gate this behavior. Both coordinates are
+    /// decoded by the <c>/inspector/v2/track</c> endpoint this SDK posts to.
     /// </para>
     /// <para>
     /// <b>Thread safety:</b> treat an instance as immutable once passed to
@@ -41,20 +42,6 @@ namespace Avo.Inspector
         /// runtime. Trimmed before sending; empty or whitespace-only is treated as absent. Setting
         /// this makes the event source-scoped - see <see cref="AppVersion"/>.
         /// </summary>
-        /// <remarks>
-        /// <b>Backend note (AVO-3543):</b> as of this writing, the Inspector backend does not yet
-        /// honor <c>outputReference</c> or <c>originHint</c> on this SDK's endpoint
-        /// (<c>POST /inspector/v1/track</c>), and does not yet accept a literal wire
-        /// <c>appVersion: null</c>. Until the backend is updated, setting <see cref="OriginHint"/>
-        /// without a non-blank <see cref="AppVersion"/> override causes this event to be
-        /// <b>silently dropped</b> - the HTTP response is still <c>200</c>, but the event never
-        /// reaches the Inspector dashboard. What this SDK sends is already the SPEC.md §7.3.6
-        /// shape, so nothing here changes when the backend catches up. As SPEC.md §7.3.6 SHOULDs,
-        /// the SDK logs one warning per process on that combination - but only while logging is
-        /// enabled (the <c>dev</c> default, or an explicit
-        /// <see cref="AvoInspector.EnableLogging(bool)"/>); it is silent otherwise. See the README
-        /// "Gateways" section and <c>CHANGELOG.md</c>'s <c>1.1.0</c> entry for the same warning.
-        /// </remarks>
         public string? OriginHint { get; set; }
 
         /// <summary>

@@ -17,13 +17,17 @@ namespace Avo.Inspector.Internal
     /// <c>trackingId</c>/<c>eventId</c>/<c>eventHash</c>/<c>avoFunction</c> are not. This SDK is
     /// therefore conformant, not divergent — it emits <c>sessionId: ""</c> and omits
     /// <c>trackingId</c>/<c>visitorId</c>/<c>userId</c>, as SPEC.md §3.3 requires.</para>
-    /// <para><b>Gateway coordinate fields (SPEC.md §4.2.1 / §7.3.6, spec v2.1.0; AVO-3516 /
-    /// AVO-3543).</b> <see cref="OutputReference"/> and <see cref="OriginHint"/> are OPTIONAL
-    /// top-level siblings of <c>eventProperties</c> for gateway-scoped API keys (see
-    /// <see cref="TrackOptions"/>), omitted entirely when absent. <see cref="AppVersion"/> is
-    /// therefore also nullable — per the §7.3.6 resolution table, with <c>originHint</c> set and no
-    /// usable per-event app version, <c>appVersion</c> is sent as a literal JSON <c>null</c> rather
-    /// than falling back to the instance's configured version.</para>
+    /// <para><b>Gateway coordinate fields (SPEC.md §4.2.1 / §7.3.6; AVO-3516).</b>
+    /// <see cref="OutputReference"/> and <see cref="OriginHint"/> are OPTIONAL top-level siblings
+    /// of <c>eventProperties</c> for gateway-scoped API keys (see <see cref="TrackOptions"/>),
+    /// omitted entirely when absent. <see cref="AppVersion"/> is therefore also nullable — per the
+    /// §7.3.6 resolution table, with <c>originHint</c> set and no usable per-event app version,
+    /// <c>appVersion</c> is sent as a literal JSON <c>null</c> rather than falling back to the
+    /// instance's configured version; the <c>/inspector/v2/track</c> endpoint decodes both
+    /// coordinates and stores a <c>null</c> <c>appVersion</c> as <c>"unversioned"</c>.</para>
+    /// <para><b><c>apiKey</c> and <c>env</c> are also sent as request headers</b> (SPEC.md §7.2).
+    /// The v2 endpoint reads them from the headers and ignores these body copies, but they stay in
+    /// the body so one body shape and one JSON Schema serve every Inspector sender.</para>
     /// </remarks>
     internal sealed class WireEvent
     {

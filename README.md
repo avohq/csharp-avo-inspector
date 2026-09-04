@@ -1,6 +1,6 @@
 # Avo Inspector — C# / .NET SDK
 
-> Implements [`avohq/spec-first-inspector-server-sdk`](https://github.com/avohq/spec-first-inspector-server-sdk) **v2.1.0**
+> Implements [`avohq/spec-first-inspector-server-sdk`](https://github.com/avohq/spec-first-inspector-server-sdk) **v3.0.0**
 
 A server-side SDK for [Avo Inspector](https://www.avo.app/). It extracts a type
 schema from the properties of the analytics events your backend sends, and reports
@@ -10,7 +10,7 @@ reaches production.
 It is **server-side only**: no browser, no session/visitor tracking, no persistent
 storage. All state is in memory.
 
-- ✅ Passes all 36 fixtures of the spec v2.1.0 conformance suite (schema-extraction,
+- ✅ Passes all 36 fixtures of the spec conformance suite (schema-extraction,
   wire-protocol, error-handling, batching) — see [Conformance](#conformance).
 - ✅ Thread-safe; safe for concurrent use on multi-threaded servers.
 - ✅ Batching with size + time/idle flush triggers, bounded queue, and gzip.
@@ -119,16 +119,9 @@ await inspector.TrackSchemaFromEvent(
     {
         OutputReference = "meta-x7k2q", // which output checkpoint this observation was bound for
         OriginHint      = "web",        // which upstream source produced the event
-        AppVersion      = "5.1.0",      // that source's app version — keep this set whenever
-                                        // OriginHint is set (see "Backend note" below)
+        AppVersion      = "5.1.0",      // that source's app version — optional; see "Origin hint"
     });
 ```
-
-> Until the backend change tracked in AVO-3543 ships, always pair `OriginHint` with a non-blank
-> `AppVersion` as above. `OriginHint` without `AppVersion` is a valid call per the contract, but
-> the current `/inspector/v1/track` endpoint silently drops that event — see the **Backend note**
-> further down. The SDK warns once per process about that combination, but **only when logging is
-> enabled** (the `Dev` default, or an explicit `EnableLogging(true)`); it is silent otherwise.
 
 `TrackOptions` has three `string?` properties, all optional and independent — set any
 combination:
@@ -171,21 +164,9 @@ the wire:
 | absent | set (non-blank) | `AppVersion`, trimmed |
 | absent | absent/blank | the constructor `Version` value (unchanged behavior) |
 
-> **Backend note:** the Inspector backend does not yet honor `outputReference` or
-> `originHint` on this SDK's endpoint (`POST /inspector/v1/track`), and does not yet
-> accept a literal `appVersion: null`. Until the backend is updated, setting
-> `OriginHint` without a non-blank `AppVersion` override causes the event to be
-> **silently dropped** — the HTTP response is still `200`, but the event never reaches
-> the Inspector dashboard. Track this at AVO-3543; a follow-up backend ticket must land
-> before `OriginHint` can be used safely without an `AppVersion` override.
->
-> What this SDK puts on the wire is already the SPEC.md §7.3.6 shape, so nothing here has
-> to change when the parser catches up — those events simply start arriving. As §7.3.6
-> recommends, the SDK also logs **one** warning per process the first time it resolves an
-> `appVersion` of `null`, so the gap is visible in development. That warning is written to
-> `stderr` **only while logging is enabled** — on by default in `Dev`, or via
-> `EnableLogging(true)` — and the SDK is completely silent about it otherwise (it never
-> logs the option values themselves).
+`OriginHint` without an `AppVersion` is an ordinary, fully supported call: the
+`/inspector/v2/track` endpoint this SDK posts to decodes both gateway coordinates and
+stores a `null` `appVersion` as `"unversioned"`. The SDK logs nothing about it.
 
 ---
 
@@ -338,12 +319,27 @@ extracts to
 
 ## Wire protocol
 
-Events are POSTed as a JSON array to `https://api.avo.app/inspector/v1/track`
-(`Content-Type: application/json`). Request bodies **≥ 1024 bytes are gzip-compressed**
-(`Content-Encoding: gzip`); smaller bodies are sent uncompressed. The .NET runtime always
-provides gzip, so this SDK is never exempt from the compression requirement. Every request
-has a 10-second timeout. There is no `Authorization` header — the `apiKey` travels in the
-body. Certificate validation always uses the platform default and cannot be disabled.
+Events are POSTed as a JSON array to `https://api.avo.app/inspector/v2/track` — the one
+endpoint every Avo Inspector sender uses, browser and server alike. Request bodies
+**≥ 1024 bytes are gzip-compressed** (`Content-Encoding: gzip`); smaller bodies are sent
+uncompressed. The .NET runtime always provides gzip, so this SDK is never exempt from the
+compression requirement. Every request has a 10-second timeout. Certificate validation always
+uses the platform default and cannot be disabled.
+
+Request headers:
+
+| Header | Value |
+|---|---|
+| `Content-Type` | `application/json` |
+| `Accept` | `application/json` |
+| `api-key` | your Inspector API key. **Required** — the endpoint answers `400` without it. |
+| `env` | `dev` / `staging` / `prod`. **Required**, and one of exactly those three strings. |
+| `X-Avo-Client` | `csharp` — the SDK's `libPlatform`. Lets Avo attribute traffic per sender at the edge without decoding a body. |
+| `Content-Encoding` | `gzip`, only when the body was compressed. |
+
+There is still no `Authorization` header. `apiKey` and `env` also remain in every event body:
+the endpoint reads them from the headers and ignores the body copies, but keeping both holds
+one body shape — and one JSON Schema — across every Inspector sender.
 
 `AVO_INSPECTOR_MOCK_ENDPOINT` redirects requests to a test endpoint, but is **fail-closed**:
 a `Prod` instance ignores it unconditionally, so production traffic can never be redirected.
@@ -376,9 +372,12 @@ always performed outside the lock.
 ## Conformance
 
 This SDK ships a thin CLI harness (`AvoInspector.Conformance`) implementing version **1.1.0** of the
-[runner contract](https://github.com/avohq/spec-first-inspector-server-sdk/blob/gateway-track-options/conformance/runner-contract.md)
+[runner contract](https://github.com/avohq/spec-first-inspector-server-sdk/blob/main/conformance/runner-contract.md)
 — it forwards a fixture's `options` object verbatim to the four-parameter overload, and omits the
-argument entirely when the fixture has none. To run the official suite against it:
+argument entirely when the fixture has none. The suite drives the SDK through
+`AVO_INSPECTOR_MOCK_ENDPOINT`, so the endpoint move to `/inspector/v2/track` needs no harness
+change; the runner records request headers itself and asserts them via a fixture's
+`expected_request_headers`. To run the official suite:
 
 ```sh
 ./scripts/run-conformance.sh
@@ -386,12 +385,17 @@ argument entirely when the fixture has none. To run the official suite against i
 
 The script builds the harness, fetches the spec repo (which hosts the language-agnostic
 suite-runner + mock server), and runs its fixtures. It defaults to `SPEC_REF=main`, which is
-spec 2.0.0 — 30 fixtures. Spec **2.1.0**, the version this SDK implements, is still open as
-avohq spec PR #3, so to run the six gateway fixtures (`wire-9`…`wire-13`, `batch-7`) as well:
+spec 2.0.0 — 30 fixtures. The gateway track options this SDK implements are spec **2.1.0**,
+still open as avohq spec PR #3, so to run their six fixtures (`wire-9`…`wire-13`, `batch-7`)
+as well:
 
 ```sh
 SPEC_REF=gateway-track-options ./scripts/run-conformance.sh   # 36/36
 ```
+
+Spec **3.0.0** — the unified `/inspector/v2/track` endpoint and its three required request
+headers, the version `InspectorVersion.SpecVersion` now records — is a separate open spec PR.
+Point `SPEC_REF` at its branch once it exists to exercise the header fixtures.
 
 The vendored fixtures under `conformance/fixtures/` (a snapshot of the spec's `main` suite) also
 back a self-contained `dotnet test` run.
@@ -408,7 +412,7 @@ dotnet test       # unit tests + the 13 schema-extraction golden fixtures
   the `<Version>` in the `.csproj` on every release. It is sent on the wire as `libVersion`
   and MUST be a plain SemVer string with no suffix.
 - `InspectorVersion.SpecVersion` records the spec contract version this SDK implements
-  (currently `2.1.0`), and `InspectorVersion.HarnessContractVersion` the conformance runner
+  (currently `3.0.0`), and `InspectorVersion.HarnessContractVersion` the conformance runner
   contract its harness implements (currently `1.1.0`). When a new `[WIRE]`-tagged spec release
   appears, regenerate/update and bump them, along with `<AvoInspectorSpecVersion>` and the
   `Description` in `AvoInspector.csproj` and the badge at the top of this README.

@@ -35,17 +35,11 @@ Normalization and wire mapping are normative in SPEC.md §7.3.6; conformance fix
   version for that one event; a blank or absent value falls back to the instance's configured
   version, unchanged.
 - Introduced by `avohq/spec-first-inspector-server-sdk` v2.1.0 (SPEC.md §4.2.1 / §7.3.6;
-  AVO-3516 / AVO-3543). `options` MUST NOT affect `ExtractSchema`, sampling, batching, or
-  `streamId` handling, and a call without it produces the pre-2.1.0 wire body.
-- **Backend note (AVO-3543):** as of this writing, the Inspector backend does not yet honor
-  `outputReference` or `originHint` on this SDK's endpoint (`POST /inspector/v1/track`), and does
-  not yet accept a literal wire `appVersion: null`. Until the backend is updated, setting
-  `OriginHint` without a non-blank `AppVersion` override causes the event to be **silently
-  dropped** — the HTTP response is still `200`, but the event never reaches the Inspector
-  dashboard. What the SDK sends is already the §7.3.6 shape, so nothing changes here when the
-  backend catches up. As §7.3.6 SHOULDs, the SDK logs one warning per process on that combination
-  — but only while logging is enabled (the `dev` default, or an explicit `EnableLogging(true)`);
-  it is silent otherwise.
+  AVO-3516). `options` MUST NOT affect `ExtractSchema`, sampling, batching, or `streamId`
+  handling, and a call without it produces the pre-2.1.0 wire body.
+- `OriginHint` without an `AppVersion` is an ordinary, fully supported call and the SDK MUST log
+  nothing about it: the `/inspector/v2/track` endpoint decodes both coordinates and stores a
+  `null` `appVersion` as `"unversioned"`.
 
 ## Non-functional requirements
 

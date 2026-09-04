@@ -5,10 +5,26 @@ follows [Semantic Versioning](https://semver.org/). The `libVersion` sent on the
 the SDK library version (`InspectorVersion.LibVersion`), independent of the spec contract
 version it implements (`InspectorVersion.SpecVersion`).
 
-## [1.1.0] — 2026-09-03
+## [1.1.0] — 2026-09-04
 
-Implements `avohq/spec-first-inspector-server-sdk` **v2.1.0** (was v1.0.0), and its conformance
+Implements `avohq/spec-first-inspector-server-sdk` **v3.0.0** (was v1.0.0), and its conformance
 harness now implements runner contract **v1.1.0**.
+
+### Changed — wire protocol
+
+- **Endpoint: `POST https://api.avo.app/inspector/v1/track` → `POST https://api.avo.app/inspector/v2/track`.**
+  Every Avo Inspector sender — browser SDK, GTM templates, server SDKs — now posts to this one
+  endpoint, so Avo can attribute traffic at the edge without decoding a body. The SDK's public API
+  is unchanged; upgrading needs no code change on your side.
+- **New request headers** (SPEC.md §7.2): `api-key` (your Inspector API key) and `env`
+  (`dev`/`staging`/`prod`), both **required** by the endpoint — it answers `400` if either is
+  missing or invalid — plus `X-Avo-Client: csharp` (this SDK's `libPlatform`), which is how Avo
+  tells senders apart. `apiKey` and `env` are still sent in every event body as well: the endpoint
+  ignores the body copies, but keeping them holds one body shape and one JSON Schema across all
+  senders.
+- The v2 endpoint does not sample server-side: it pins `samplingRate` to `1.0` and stores exact
+  counts rather than extrapolating. The SDK itself is unchanged — it still reads `samplingRate`
+  from the `200` response and still applies its own client-side sampling.
 
 ### Added
 
@@ -32,36 +48,23 @@ harness now implements runner contract **v1.1.0**.
 - `OriginHint` must be a low-cardinality value (e.g. `"web"`, `"ios"`, `"android"`) — it
   MUST NOT be a user identifier or other high-cardinality value. Documentation-only; not
   validated at runtime.
-- **Backend note:** the Inspector backend does not yet honor `outputReference` or
-  `originHint` on this SDK's endpoint (`POST /inspector/v1/track`), and does not yet
-  accept a literal `appVersion: null`. Until the backend is updated, setting
-  `OriginHint` without a non-blank `AppVersion` override causes the event to be
-  **silently dropped** — the HTTP response is still `200`, but the event never reaches
-  the Inspector dashboard. Track this at AVO-3543; a follow-up backend ticket must land
-  before `OriginHint` can be used safely without an `AppVersion` override. What the SDK
-  sends is already the SPEC.md §7.3.6 shape, so nothing changes here when the parser is
-  fixed — those events simply start arriving.
-- A one-shot warning (SPEC.md §7.3.6's SHOULD) the first time a call resolves
-  `appVersion` to `null`, so the gap above is visible in development. It is written to
-  `stderr` **only while logging is enabled** — on by default in `Dev`, or via
-  `EnableLogging(true)` — and the SDK is silent about it otherwise. It is emitted at most
-  once per process (an atomic latch, so concurrent triggering calls still produce a single
-  line) and never includes the option values.
 
 ### Changed
 
-- `InspectorVersion.SpecVersion` `1.0.0` → `2.1.0` and `InspectorVersion.HarnessContractVersion`
-  `1.0.0` → `1.1.0` (with `<AvoInspectorSpecVersion>` and the package `Description` in
-  `AvoInspector.csproj` to match). Docs that described `sessionId: ""` as a deliberate divergence
-  from the spec, and `TrackOptions` as an extension outside it, were rewritten: SPEC.md §3.3 has
-  REQUIRED `sessionId: ""` of server SDKs since spec 2.0.0, and the gateway fields are SPEC.md
-  §4.2.1 / §7.3.6 in 2.1.0 — the SDK is conformant on both counts.
+- `InspectorVersion.SpecVersion` `1.0.0` → `3.0.0` and `InspectorVersion.HarnessContractVersion`
+  `1.0.0` → `1.1.0` (with `<AvoInspectorSpecVersion>`, the package `Description` in
+  `AvoInspector.csproj`, and the README badge to match). Docs that described `sessionId: ""` as a
+  deliberate divergence from the spec, and `TrackOptions` as an extension outside it, were
+  rewritten: SPEC.md §3.3 has REQUIRED `sessionId: ""` of server SDKs since spec 2.0.0, and the
+  gateway fields are SPEC.md §4.2.1 / §7.3.6 since 2.1.0 — the SDK is conformant on both counts.
 - `AvoInspector.Conformance` forwards a fixture's `options` object (single-event
   `trackSchemaFromEvent` input and sequence `track` steps) verbatim to the four-parameter overload,
   and still omits the argument entirely when a fixture has no `options` — runner contract 1.1.0.
   `scripts/run-conformance.sh` now defaults `SPEC_REF` to `main` (the `require-sessionid-on-wire`
   branch it used to default to has long since merged); `SPEC_REF=gateway-track-options` runs the
-  spec 2.1.0 suite, 36/36.
+  spec 2.1.0 suite, 36/36. The harness needs no change for the v2 headers: the suite drives the
+  SDK through `AVO_INSPECTOR_MOCK_ENDPOINT` and the runner records and asserts request headers
+  itself.
 - `AvoInspector.Tests` and `AvoInspector.Conformance` now build against
   `src/AvoInspector/AvoInspector.csproj` via `ProjectReference` instead of the published
   `AvoInspector` NuGet package, so CI and `./scripts/run-conformance.sh` exercise this

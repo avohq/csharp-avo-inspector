@@ -37,9 +37,9 @@ namespace Avo.Inspector.Internal
     }
 
     /// <summary>
-    /// Performs the Inspector HTTP POST (SPEC.md §7): JSON array body, mandatory gzip for bodies
-    /// ≥ 1024 bytes (§7.3.5), a 10-second timeout (§7.6), and the §7.5 error taxonomy. Never throws
-    /// — every failure is mapped to <see cref="SendStatus"/>.
+    /// Performs the Inspector HTTP POST (SPEC.md §7): JSON array body, the §7.2 request headers,
+    /// mandatory gzip for bodies ≥ 1024 bytes (§7.3.5), a 10-second timeout (§7.6), and the §7.5
+    /// error taxonomy. Never throws — every failure is mapped to <see cref="SendStatus"/>.
     /// </summary>
     internal static class InspectorHttpSender
     {
@@ -63,11 +63,18 @@ namespace Avo.Inspector.Internal
         /// Serializes and sends one batch. Returns a <see cref="SendResult"/>; never throws.
         /// </summary>
         /// <param name="endpoint">Resolved endpoint URL (SPEC.md §7.1).</param>
+        /// <param name="apiKey">Inspector API key; sent as the REQUIRED <c>api-key</c> header (SPEC.md §7.2).</param>
+        /// <param name="env">Environment wire string; sent as the REQUIRED <c>env</c> header (SPEC.md §7.2).</param>
         /// <param name="batch">The events to send as a single JSON array.</param>
         /// <param name="shouldLog">Whether diagnostics may be written to stderr.</param>
         /// <param name="abortToken">Cancelled by <c>Destroy()</c> to abandon an in-flight send.</param>
         public static async Task<SendResult> SendAsync(
-            string endpoint, WireEvent[] batch, bool shouldLog, CancellationToken abortToken = default)
+            string endpoint,
+            string apiKey,
+            string env,
+            WireEvent[] batch,
+            bool shouldLog,
+            CancellationToken abortToken = default)
         {
             byte[] rawBytes;
             try
@@ -108,6 +115,22 @@ namespace Avo.Inspector.Internal
                 using (var request = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = content })
                 {
                     request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+                    // SPEC.md §7.2 — the unified /inspector/v2/track endpoint reads the credential
+                    // and the environment from headers (a missing or invalid one is a 400) and
+                    // attributes traffic by sender at the edge via X-Avo-Client, without decoding
+                    // the body. apiKey and env stay in the body as well (§7.3): v2 ignores the body
+                    // copies, and keeping them holds one body shape and one JSON Schema for every
+                    // sender. X-Avo-Client carries this SDK's libPlatform, so the token is "csharp".
+                    //
+                    // TryAddWithoutValidation rather than Add: Add throws FormatException on a
+                    // pathological apiKey, and that would escape SendAsync's "never throws"
+                    // contract from outside the try below. Skipping the up-front validation is
+                    // safe — the HTTP stack still rejects a header value containing CR/LF when it
+                    // writes the request, and that throw lands in the catch below as SendStatus.Error.
+                    request.Headers.TryAddWithoutValidation("api-key", apiKey);
+                    request.Headers.TryAddWithoutValidation("env", env);
+                    request.Headers.TryAddWithoutValidation("X-Avo-Client", InspectorVersion.LibPlatform);
 
                     try
                     {

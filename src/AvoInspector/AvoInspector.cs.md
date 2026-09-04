@@ -38,16 +38,9 @@ the `_flushTimer`, and a `CancellationTokenSource`.
 `_shouldLog` is a **process-wide `static volatile bool`** (SPEC.md §4.4) — shared by every instance
 in the process, not per-instance.
 
-`_originHintWithoutAppVersionWarned` is also **process-wide `static`**, for the identical scoping
-reason as `_shouldLog`: a per-instance field would still allow unbounded stderr volume from a
-caller that constructs many short-lived `AvoInspector` instances. It is the one-shot latch for the
-gateway `originHint`-without-`AppVersion` warning (AVO-3543, see "Wire event construction" below),
-stored as an `int` (`0` = not yet warned, `1` = warned) so it can be claimed atomically with
-`Interlocked.CompareExchange`. Claimed only on the branch that actually writes the warning; never
-reset in production (an `internal` test hook re-arms it).
-
-Constants: production endpoint `https://api.avo.app/inspector/v1/track`; mock-endpoint env var name
-`AVO_INSPECTOR_MOCK_ENDPOINT`; default flush timeout `10_000` ms.
+Constants: production endpoint `https://api.avo.app/inspector/v2/track` — the single endpoint every
+Avo Inspector sender uses (SPEC.md §7.1); mock-endpoint env var name `AVO_INSPECTOR_MOCK_ENDPOINT`;
+default flush timeout `10_000` ms.
 
 ## Non-functional requirements
 
@@ -122,7 +115,7 @@ Pipeline: extract schema → resolve stream id → apply per-event sampling → 
 batch → dispatch a send when a flush trigger fires.
 
 - **`options` (`TrackOptions`, SPEC.md §4.2.1 / §7.3.6 — spec v2.1.0's gateway track options;
-  AVO-3516/AVO-3543):** supplied through the four-parameter overload that §4.2.1 prescribes for
+  AVO-3516):** supplied through the four-parameter overload that §4.2.1 prescribes for
   languages without optional trailing parameters;
   the retained three-parameter overload passes `null`, so every existing call site — source or
   precompiled — keeps compiling, binding, and behaving identically. Threaded
@@ -159,7 +152,7 @@ Each event becomes a `WireEvent` carrying: `apiKey`, `appName`, `appVersion`,
 `messageId`, `streamId`, a UTC `createdAt` formatted `yyyy-MM-dd'T'HH:mm:ss.fff'Z'` (invariant
 culture), the sampling-rate snapshot, `type = "event"`, the event name (null → `""`), and the
 extracted schema as `eventProperties` — plus, since this SDK's 1.1.0, the gateway coordinate fields
-below (SPEC.md §7.3.6; AVO-3516/AVO-3543).
+below (SPEC.md §7.3.6; AVO-3516).
 
 **Gateway coordinate fields (SPEC.md §7.3.6).** `options?.OutputReference`, `options?.OriginHint`, and
 `options?.AppVersion` are each normalized by `NormalizeHint(string?)` — same shape as
@@ -179,16 +172,12 @@ With `options == null` or an empty `new TrackOptions()`, every field above norma
 the wire body carries exactly the 1.0.0 key set and values (no `outputReference`/`originHint` keys,
 `appVersion` = the constructor value); the only difference from a 1.0.0 body is `libVersion`.
 
-**One-shot gated warning (SPEC.md §7.3.6 SHOULD).** When `originHint != null && resolvedAppVersion
-== null` (decision-table row 2 — the current v1 backend silently drops this event, AVO-3543) and
-`_shouldLog` is `true` (the `dev` default or an explicit `EnableLogging(true)`; the warning is
-silent otherwise),
-`BuildWireEvent` claims the latch with `Interlocked.CompareExchange(ref latch, 1, 0) == 0` as the
-last operand of the condition, and only the single caller that wins the exchange calls
-`Logger.Error` with a fixed message string (never the field values). This caps the warning at
-exactly one `stderr` line for the life of the process, even under concurrent triggering calls —
-this trigger condition, unlike the file's other `Logger.Error` call sites, can otherwise hold on
-every call of a healthy, spec-compliant gateway integration. No `_lock` is taken.
+**No warning on the `null` `appVersion` row.** Row 2 (`originHint` set, no usable `AppVersion`) is
+an ordinary, fully supported call: `/inspector/v2/track` decodes both coordinates and stores a
+`null` `appVersion` as `"unversioned"`. `BuildWireEvent` MUST stay silent on it. The one-shot
+stderr warning this SDK carried through spec 2.1.0, and its process-wide `Interlocked` latch, were
+justified solely by `/inspector/v1/track` discarding the coordinates and dropping the event, and
+were removed with the endpoint move.
 
 ### Flush
 
@@ -224,6 +213,10 @@ Constructor options, the sampling rate, and the process-wide logging flag persis
 - **Endpoint resolution is fail-closed (SPEC.md §7.1):** a `prod` instance **NEVER** honors
   `AVO_INSPECTOR_MOCK_ENDPOINT`. Only non-prod instances use the override when it is set (as-is, no
   path appending); otherwise the production endpoint is used.
+- The instance's `_apiKey` and `_envWire` are passed to `InspectorHttpSender.SendAsync` alongside
+  the resolved endpoint, because `/inspector/v2/track` REQUIRES them as the `api-key` and `env`
+  request headers (SPEC.md §7.2). They stay in the event body too — the endpoint reads the headers
+  and ignores the body copies, but one body shape serves every Inspector sender.
 
 <!-- The class also exposes a small set of `internal` test-only hooks
 (SetSamplingRateForTesting, CurrentSamplingRate, IsDestroyed, EffectiveBatchSize,
