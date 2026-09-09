@@ -13,8 +13,8 @@ namespace Avo.Inspector.Tests
     /// <summary>
     /// A tiny in-process HTTP mock for the Inspector endpoint, used by the batching/lifecycle tests
     /// that the deterministic fixtures cannot cover (time/idle flush and transient-failure no-requeue).
-    /// Records request bodies (gunzipping when <c>Content-Encoding: gzip</c>) and returns a
-    /// configurable status/body. Set the SDK's endpoint to <see cref="BaseUrl"/> via
+    /// Records request bodies (gunzipping when <c>Content-Encoding: gzip</c>) and headers, and
+    /// returns a configurable status/body. Set the SDK's endpoint to <see cref="BaseUrl"/> via
     /// <c>AVO_INSPECTOR_MOCK_ENDPOINT</c>.
     /// </summary>
     internal sealed class TestInspectorServer : IDisposable
@@ -137,10 +137,22 @@ namespace Avo.Inspector.Tests
                 }
             }
 
+            // Copy the headers into a case-insensitive snapshot: the live HttpListenerRequest is
+            // recycled once the response is written, so the collection cannot be held onto.
+            var headers = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            foreach (string? name in request.Headers.AllKeys)
+            {
+                if (name != null)
+                {
+                    headers[name] = request.Headers[name];
+                }
+            }
+
             return new RecordedRequest(
                 Encoding.UTF8.GetString(bodyBytes),
                 encoding,
-                request.ContentType);
+                request.ContentType,
+                headers);
         }
 
         private static int FindFreePort()
@@ -161,16 +173,29 @@ namespace Avo.Inspector.Tests
 
         internal sealed class RecordedRequest
         {
-            public RecordedRequest(string body, string? contentEncoding, string? contentType)
+            private readonly IReadOnlyDictionary<string, string?> _headers;
+
+            public RecordedRequest(
+                string body,
+                string? contentEncoding,
+                string? contentType,
+                IReadOnlyDictionary<string, string?> headers)
             {
                 Body = body;
                 ContentEncoding = contentEncoding;
                 ContentType = contentType;
+                _headers = headers;
             }
 
             public string Body { get; }
             public string? ContentEncoding { get; }
             public string? ContentType { get; }
+
+            /// <summary>
+            /// The request header of that name (case-insensitive, as HTTP requires), or
+            /// <c>null</c> when the request did not carry it.
+            /// </summary>
+            public string? Header(string name) => _headers.TryGetValue(name, out var value) ? value : null;
         }
     }
 }

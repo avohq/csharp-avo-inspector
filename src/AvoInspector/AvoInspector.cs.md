@@ -37,8 +37,9 @@ the `_flushTimer`, and a `CancellationTokenSource`.
 `_shouldLog` is a **process-wide `static volatile bool`** (SPEC.md §4.4) — shared by every instance
 in the process, not per-instance.
 
-Constants: production endpoint `https://api.avo.app/inspector/v1/track`; mock-endpoint env var name
-`AVO_INSPECTOR_MOCK_ENDPOINT`; default flush timeout `10_000` ms.
+Constants: production endpoint `https://api.avo.app/inspector/v2/track` — the single endpoint every
+Avo Inspector sender uses (SPEC.md §7.1); mock-endpoint env var name `AVO_INSPECTOR_MOCK_ENDPOINT`;
+default flush timeout `10_000` ms.
 
 ## Non-functional requirements
 
@@ -63,6 +64,21 @@ public AvoInspector(string apiKey, string env, string version, string? appName =
 
 - The options overload throws `ArgumentNullException` on a null `options`, then maps `Env` via its
   enum→wire string.
+- `apiKey` is **trimmed before validation and only the trimmed value is stored**, so every use site
+  — the `api-key` header and the `apiKey` body copy alike — sees one identical value. An Inspector
+  API key is a token, so surrounding whitespace is never significant; trimming cannot invalidate a
+  working key, and it turns a key pasted with a trailing newline from total silent telemetry loss
+  (it would fail the §7.2 header guard on every send) into a working integration. It costs no
+  security, because `Trim` strips only surrounding whitespace: it repairs exactly the accident — a
+  trailing CR or LF with nothing after it — while a control character with content on both sides
+  survives it, and NUL survives anywhere since NUL is not whitespace. **Whatever survives is fatal:**
+  SPEC.md §4.1 requires the constructor to throw `ArgumentException` with the exact message
+  `"[Avo Inspector] API key contains a control character. The API key is sent as a request header
+  and cannot contain CR, LF, or NUL."`, checked with `InspectorHttpSender.IsSafeHeaderValue` so the
+  constructor and the sender can never disagree. The check runs after the emptiness check, so a
+  whitespace-only key is still "no API key provided" and never reaches it. This throw is deliberately
+  redundant with the sender's §7.2 refusal: that guard is what protects the wire, but on its own it
+  turns a configuration mistake into a process that starts cleanly and delivers nothing.
 - Both overloads converge on the same init logic and **validate in order**: `apiKey` first, then
   `version`. Each must be non-null/non-empty/non-whitespace, else throw `ArgumentException` with the
   **exact** spec messages — `"[Avo Inspector] No API key provided. Inspector can't operate without
@@ -98,12 +114,30 @@ an empty list for a null map or on any internal parser error (logging the error 
 ### Tracking
 
 ```csharp
+// 1.0.0 CLR signature, retained (binary-compatible); delegates with all three coordinates null.
+// Declares no default for streamId: one here would make a two-argument call ambiguous with the
+// form below (CS0121), and a default is call-site metadata, not part of the CLR signature.
 public Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(
-    string eventName, IDictionary<string, object?>? eventProperties, string? streamId = null)
+    string eventName, IDictionary<string, object?>? eventProperties, string? streamId)
+
+// SPEC.md §4.2.1 flattened form: C# has named arguments, so the three coordinates are top-level
+// optional parameters rather than an options object.
+public Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(
+    string eventName, IDictionary<string, object?>? eventProperties, string? streamId = null,
+    string? outputReference = null, string? originHint = null, string? originAppVersion = null)
 ```
 
 Pipeline: extract schema → resolve stream id → apply per-event sampling → enqueue into the pending
 batch → dispatch a send when a flush trigger fires.
+
+- **`outputReference` / `originHint` / `originAppVersion` (SPEC.md §4.2.1 / §7.3.6 — the gateway
+  track options once drafted as spec v2.1.0; AVO-3516):** top-level optional parameters, the shape
+  §4.2.1 requires of a language with named arguments — a caller writes `originAppVersion: "4.2.0"`
+  at the call site. The retained 1.0.0 overload passes all three as `null`, so every existing call
+  site — source or precompiled — keeps compiling, binding, and behaving identically. Threaded
+  unchanged into `BuildWireEvent`, which is the only place they are inspected (see "Wire event
+  construction" below), and not at all if the event is sampled out first. No lock is taken for them
+  — per-call, immutable input.
 
 - **Post-`Destroy` no-op:** resolves with an empty list, no enqueue, no HTTP call. Re-checked again
   under the lock right before enqueue to handle a mid-flight `Destroy`.
@@ -133,7 +167,34 @@ Each event becomes a `WireEvent` carrying: `apiKey`, `appName`, `appVersion`,
 `libVersion`/`libPlatform` (from `InspectorVersion`), `env` wire string, a fresh lowercase UUID v4
 `messageId`, `streamId`, a UTC `createdAt` formatted `yyyy-MM-dd'T'HH:mm:ss.fff'Z'` (invariant
 culture), the sampling-rate snapshot, `type = "event"`, the event name (null → `""`), and the
-extracted schema as `eventProperties`.
+extracted schema as `eventProperties` — plus, since this SDK's 1.1.0, the gateway coordinate fields
+below (SPEC.md §7.3.6; AVO-3516).
+
+**Gateway coordinate fields (SPEC.md §7.3.6).** The `outputReference`, `originHint` and
+`originAppVersion` arguments are each normalized by `NormalizeHint(string?)` — same shape as
+`ResolveStreamId`, but trims and returns `null` (omit the wire key) for `null`/`""`/whitespace-only
+instead of `""`, and never logs. `outputReference`/`originHint` are set on the `WireEvent` as-is
+(omitted on the wire when `null`, via `WireEvent`'s per-property `[JsonIgnore]`). `appVersion`
+resolves per SPEC.md §7.3.6's table, restated here:
+
+| `originHint` (normalized) | `originAppVersion` (normalized) | wire `appVersion` |
+|---|---|---|
+| set | set (non-blank) | `originAppVersion`, trimmed |
+| set | absent/blank | literal JSON `null` |
+| absent | set (non-blank) | `originAppVersion`, trimmed |
+| absent | absent/blank | the instance's constructed `appVersion` (unchanged 1.0.0 behavior) |
+
+When none of the three is supplied, every field above normalizes to `null` and the wire body
+carries exactly the 1.0.0 key set and values (no `outputReference`/`originHint` keys, `appVersion`
+= the constructor value); the only difference from a 1.0.0 body is `libVersion`.
+
+**No warning on the `null` `appVersion` row.** Row 2 (`originHint` set, no usable
+`originAppVersion`) is
+an ordinary, fully supported call: `/inspector/v2/track` decodes both coordinates and stores a
+`null` `appVersion` as `"unversioned"`. `BuildWireEvent` MUST stay silent on it. The one-shot
+stderr warning this SDK carried through spec 2.1.0, and its process-wide `Interlocked` latch, were
+justified solely by `/inspector/v1/track` discarding the coordinates and dropping the event, and
+were removed with the endpoint move.
 
 ### Flush
 
@@ -169,6 +230,10 @@ Constructor options, the sampling rate, and the process-wide logging flag persis
 - **Endpoint resolution is fail-closed (SPEC.md §7.1):** a `prod` instance **NEVER** honors
   `AVO_INSPECTOR_MOCK_ENDPOINT`. Only non-prod instances use the override when it is set (as-is, no
   path appending); otherwise the production endpoint is used.
+- The instance's `_apiKey` and `_envWire` are passed to `InspectorHttpSender.SendAsync` alongside
+  the resolved endpoint, because `/inspector/v2/track` REQUIRES them as the `api-key` and `env`
+  request headers (SPEC.md §7.2). They stay in the event body too — the endpoint reads the headers
+  and ignores the body copies, but one body shape serves every Inspector sender.
 
 <!-- The class also exposes a small set of `internal` test-only hooks
 (SetSamplingRateForTesting, CurrentSamplingRate, IsDestroyed, EffectiveBatchSize,

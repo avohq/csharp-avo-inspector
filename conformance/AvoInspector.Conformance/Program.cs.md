@@ -8,7 +8,9 @@ import: conformance/AvoInspector.Conformance/JsonInterop.cs.md
 The `avo-inspector-conformance` CLI harness. It implements the language-agnostic stdin/stdout JSON
 protocol of the Avo Inspector spec's runner contract: read one input envelope, construct an
 `AvoInspector`, run the requested operation, and write exactly one output envelope. It contains no
-assertion logic — the suite runner asserts. HARNESS_CONTRACT_VERSION `1.0.0`.
+assertion logic — the suite runner asserts. HARNESS_CONTRACT_VERSION `1.1.0` (mirrored in
+`InspectorVersion.HarnessContractVersion`), which adds the optional `options` object on single-event
+`trackSchemaFromEvent` input and on sequence `track` steps.
 
 ## Tech stack
 
@@ -19,7 +21,13 @@ C# (`net8.0` console exe, `AssemblyName` `AvoInspector.Conformance`); `System.Te
 
 Input envelope fields read: `fixture_id` (required), `suite`, `operation`, `constructor`
 (`apiKey`/`env`/`version`/`appName`/`batchSize`/`batchFlushSeconds`/`maxQueueSize`/`disableBatchTimer`),
-`input`, `steps`, `precondition.samplingRate`.
+`input` (`eventName`/`eventProperties`/`streamId`/`options`), `steps` (each `track` step may also
+carry `options`), `precondition.samplingRate`.
+
+`options` → a harness-local `TrackCoordinates { OutputReference, OriginHint, OriginAppVersion }` from the string keys
+`outputReference` / `originHint` / `originAppVersion` (SPEC.md §4.2.1 renamed the option; the wire
+field it resolves stays `appVersion`). It is a harness type, not an SDK one: §4.2.1 puts C# on the
+named-argument row, so the SDK exposes the three as parameters and no options type of its own.
 
 `OutputEnvelope` → `{ fixture_id, passed, actual, outcome, error }`.
 `StepRecord` → `{ action, outcome, value }` (one per sequence step).
@@ -34,14 +42,25 @@ Input envelope fields read: `fixture_id` (required), `suite`, `operation`, `cons
 4. Resolve `operation` (defaults to `extractSchema` when `suite == "schema-extraction"`) and dispatch:
    - `extractSchema` — convert `input` to a property map (`null` passes through) and return
      `ExtractSchema(...)` as `actual`, `outcome: "resolve"`.
-   - `trackSchemaFromEvent` — call `TrackSchemaFromEvent(eventName, eventProperties, streamId?)`
-     (the third argument is omitted when no `streamId` is given). On success `actual` is the resolved
-     schema; an `AvoInspectorTrackException` becomes `outcome: "reject"` with the exact rejection
-     string as `actual`.
+   - `trackSchemaFromEvent` — call `TrackSchemaFromEvent(eventName, eventProperties, streamId?,
+     outputReference?, originHint?, originAppVersion?)`. On success `actual` is the resolved schema;
+     an `AvoInspectorTrackException` becomes `outcome: "reject"` with the exact rejection string as
+     `actual`.
    - `sequence` — run `steps` in order against one instance, recording a `StepRecord` each:
-     `track` (await), `trackN` (fire `count` **genuinely concurrent** tracks via thread-pool tasks,
-     join all, value = count), `flush` (await `Flush(timeoutMs?)`), `destroy`.
-5. Write exactly one output envelope as a single UTF-8 JSON line to stdout, then exit.
+     `track` (await, same `options` handling as above), `trackN` (fire `count` **genuinely
+     concurrent** tracks via thread-pool tasks, join all, value = count), `flush` (await
+     `Flush(timeoutMs?)`), `destroy`.
+5. **Call shape for `options` (runner-contract 1.1.0; SPEC.md §4.2.1).** The envelope key stays
+   `options` in either call-site shape — it is the transport for the three values, not a claim about
+   the SDK's signature — and this SDK flattens them, so the harness passes each key as its matching
+   top-level named argument, **verbatim**: no trimming, dropping, or coercion, since normalization
+   is the SDK behavior the fixture asserts. `streamId` is passed as `null` when the fixture has
+   none. A non-string JSON value cannot cross into a `string?` parameter, so in this harness it is
+   simply absent; SPEC.md §7.3.6 rule 3 makes that the required outcome anyway, enforced by the type
+   system in a statically-typed SDK rather than by harness code. When the fixture carries no
+   `options`, pass none of the three — never blank placeholders — and omit the third argument
+   entirely when no `streamId` is given (contract-correct arity).
+6. Write exactly one output envelope as a single UTF-8 JSON line to stdout, then exit.
 
 ## Non-functional requirements
 

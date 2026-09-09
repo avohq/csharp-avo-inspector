@@ -14,7 +14,9 @@ namespace Avo.Inspector.Conformance
     /// JSON protocol in <c>conformance/runner-contract.md</c>. It contains NO assertion logic — it
     /// parses the input envelope, constructs an <see cref="AvoInspector"/>, runs the requested
     /// operation, and writes exactly one output envelope line to stdout. All diagnostics go to
-    /// stderr. HARNESS_CONTRACT_VERSION: 1.0.0.
+    /// stderr. HARNESS_CONTRACT_VERSION: 1.1.0 (see
+    /// <see cref="InspectorVersion.HarnessContractVersion"/>) — adds the optional <c>options</c>
+    /// object on single-event <c>trackSchemaFromEvent</c> input and on sequence <c>track</c> steps.
     /// </summary>
     internal static class Program
     {
@@ -137,12 +139,14 @@ namespace Avo.Inspector.Conformance
                 properties = JsonInterop.ToPropertyMap(propsEl);
             }
             var streamId = input.ValueKind == JsonValueKind.Object ? GetString(input, "streamId") : null;
+            var options = ReadTrackCoordinates(input);
 
             object? actual;
             string outcome;
             try
             {
-                actual = await CallTrack(inspector, eventName ?? string.Empty, properties, streamId).ConfigureAwait(false);
+                actual = await CallTrack(inspector, eventName ?? string.Empty, properties, streamId, options)
+                    .ConfigureAwait(false);
                 outcome = "resolve";
             }
             catch (Exception ex)
@@ -177,7 +181,9 @@ namespace Avo.Inspector.Conformance
                             properties = JsonInterop.ToPropertyMap(propsEl);
                         }
                         var streamId = GetString(step, "streamId");
-                        var value = await CallTrack(inspector, eventName, properties, streamId).ConfigureAwait(false);
+                        var options = ReadTrackCoordinates(step);
+                        var value = await CallTrack(inspector, eventName, properties, streamId, options)
+                            .ConfigureAwait(false);
                         records.Add(new StepRecord("track", "resolve", value));
                         break;
                     }
@@ -243,12 +249,68 @@ namespace Avo.Inspector.Conformance
         }
 
         private static Task<IReadOnlyList<SchemaEntry>> CallTrack(
-            AvoInspector inspector, string eventName, IDictionary<string, object?>? properties, string? streamId)
+            AvoInspector inspector, string eventName, IDictionary<string, object?>? properties,
+            string? streamId, TrackCoordinates? options)
         {
-            // Omit the third argument when no streamId is provided (contract-correct arity).
+            if (options != null)
+            {
+                // runner-contract 1.1.0 + SPEC.md §4.2.1: this SDK flattens the three coordinates,
+                // so the harness passes each envelope key as its matching top-level parameter
+                // rather than as an options object. streamId is passed as null when the fixture has
+                // none (the SDK resolves it to "" exactly as the omitted third argument would).
+                return inspector.TrackSchemaFromEvent(
+                    eventName,
+                    properties,
+                    streamId,
+                    outputReference: options.OutputReference,
+                    originHint: options.OriginHint,
+                    originAppVersion: options.OriginAppVersion);
+            }
+            // No `options` in the fixture: pass none of the three — never blank placeholders — and
+            // omit the third argument when no streamId is provided (contract-correct arity).
             return streamId == null
                 ? inspector.TrackSchemaFromEvent(eventName, properties)
                 : inspector.TrackSchemaFromEvent(eventName, properties, streamId);
+        }
+
+        /// <summary>
+        /// The three gateway coordinates exactly as a fixture's <c>options</c> object carries them,
+        /// before any SDK normalization. A harness-local carrier only: SPEC.md §4.2.1 puts C# on the
+        /// named-argument row, so the SDK itself exposes no options type — the runner-contract
+        /// envelope key stays <c>options</c> in either shape, being the transport for the three
+        /// values rather than a claim about the SDK's signature.
+        /// </summary>
+        private sealed class TrackCoordinates
+        {
+            public string? OutputReference { get; set; }
+            public string? OriginHint { get; set; }
+            public string? OriginAppVersion { get; set; }
+        }
+
+        /// <summary>
+        /// Reads a fixture's optional <c>options</c> object (runner-contract 1.1.0; SPEC.md §4.2.1).
+        /// Values are copied <b>verbatim</b> — no trimming, dropping, or coercion; normalization is
+        /// the SDK's job and is exactly what the fixture asserts. Returns <c>null</c> when the
+        /// fixture carries no <c>options</c>, so the harness passes none of the three rather than
+        /// blank values.
+        /// </summary>
+        private static TrackCoordinates? ReadTrackCoordinates(JsonElement element)
+        {
+            if (element.ValueKind != JsonValueKind.Object
+                || !element.TryGetProperty("options", out var options)
+                || options.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+            return new TrackCoordinates
+            {
+                OutputReference = GetString(options, "outputReference"),
+                OriginHint = GetString(options, "originHint"),
+                // SPEC.md §4.2.1 renamed the option to `originAppVersion`; the wire field it
+                // resolves stays `appVersion` (§7.3.1). Fixtures wire-9 / wire-11 / batch-7 carry
+                // the renamed key.
+                OriginAppVersion = GetString(options, "originAppVersion")
+            };
         }
 
         // ----- construction + preconditions -----------------------------------------------------

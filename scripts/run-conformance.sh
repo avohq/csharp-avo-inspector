@@ -11,19 +11,29 @@
 # Environment overrides:
 #   SPEC_REPO_URL   git URL of the spec repo (default: the public avohq repo)
 #   SPEC_DIR        local checkout path     (default: <repo>/.spec-repo)
-#   SPEC_REF        branch/tag/sha to check out (default: require-sessionid-on-wire)
+#   SPEC_REF        branch/tag/sha to check out (default: main)
 #
-# NOTE: SPEC_REF defaults to the `require-sessionid-on-wire` branch (avohq spec PR #2),
-# which fixes the spec to REQUIRE sessionId on the wire — the live ingestion pipeline
-# drops events that omit it. Until that PR merges, running against `main` reports
-# 20/30 because main still (incorrectly) forbids sessionId. After it merges, set
-# SPEC_REF=main.
+# `main` carries spec 3.0.0 (36 fixtures) — the unified POST /inspector/v2/track endpoint and its
+# REQUIRED api-key / env / X-Avo-Client request headers (SPEC.md §7.1/§7.2), the gateway track
+# options once drafted as 2.1.0 (SPEC.md §4.2.1/§7.3.6), and the removal of the wire sessionId
+# (SPEC.md §3.3). That is the version this SDK records in InspectorVersion.SpecVersion, so the
+# default ref is the one that produces a clean run.
+#
+# 3.0.0 reached `main` in avohq/spec-first-inspector-server-sdk#3 (merged 2026-09-09), which is why
+# the default is no longer the `gateway-track-options` branch that PR was developed on. The branch
+# still exists and is tree-identical to the merge, so an older `SPEC_REF=gateway-track-options`
+# invocation keeps working; prefer `main`. The spec repo publishes no version tags, so there is no
+# `v3.0.0` ref to pin to instead.
+#
+# No harness change is needed for the headers: the suite drives the SDK through
+# AVO_INSPECTOR_MOCK_ENDPOINT, and the runner records request headers itself and asserts them
+# via a fixture's expected_request_headers — wire-1 and batch-1 pin all three.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SPEC_REPO_URL="${SPEC_REPO_URL:-https://github.com/avohq/spec-first-inspector-server-sdk.git}"
 SPEC_DIR="${SPEC_DIR:-$ROOT/.spec-repo}"
-SPEC_REF="${SPEC_REF:-require-sessionid-on-wire}"
+SPEC_REF="${SPEC_REF:-main}"
 HARNESS_PROJECT="$ROOT/conformance/AvoInspector.Conformance/AvoInspector.Conformance.csproj"
 HARNESS_DLL="$ROOT/conformance/AvoInspector.Conformance/bin/Release/net8.0/AvoInspector.Conformance.dll"
 

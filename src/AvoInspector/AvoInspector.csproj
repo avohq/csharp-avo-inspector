@@ -13,9 +13,9 @@
 
     <!-- NuGet package metadata -->
     <PackageId>AvoInspector</PackageId>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Authors>Avo</Authors>
-    <Description>Avo Inspector server-side SDK for C#/.NET. Extracts event property schemas and reports them to the Avo Inspector API. Implements avohq/spec-first-inspector-server-sdk v1.0.0.</Description>
+    <Description>Avo Inspector server-side SDK for C#/.NET. Extracts event property schemas and reports them to the Avo Inspector API. Implements avohq/spec-first-inspector-server-sdk v3.0.0.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>avo;inspector;analytics;observability;telemetry</PackageTags>
     <PackageProjectUrl>https://github.com/avohq/csharp-avo-inspector</PackageProjectUrl>
@@ -24,7 +24,7 @@
     <!-- Renders the README on the nuget.org package page (packed at the package root below). -->
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <!-- avohq/spec-first-inspector-server-sdk spec version implemented by this SDK. -->
-    <AvoInspectorSpecVersion>1.0.0</AvoInspectorSpecVersion>
+    <AvoInspectorSpecVersion>3.0.0</AvoInspectorSpecVersion>
 
     <!-- Symbols + SourceLink: ship a .snupkg and embed repo/commit info so consumers can
          step into this SDK's source while debugging. -->

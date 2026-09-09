@@ -3,7 +3,7 @@ using System;
 namespace Avo.Inspector
 {
     /// <summary>
-    /// Thrown by <see cref="AvoInspector.TrackSchemaFromEvent"/> on a synchronous internal error
+    /// Thrown by <see cref="AvoInspector.TrackSchemaFromEvent(string, System.Collections.Generic.IDictionary{string, object}, string)"/> on a synchronous internal error
     /// before the event is enqueued (SPEC.md §4.2.5, §7.5). The <see cref="Exception.Message"/> is
     /// the exact rejection string mandated by the spec.
     /// </summary>
