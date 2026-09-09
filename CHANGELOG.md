@@ -102,13 +102,13 @@ harness now implements runner contract **v1.1.0**.
 - `AvoInspector.Conformance` forwards a fixture's `options` values (single-event
   `trackSchemaFromEvent` input and sequence `track` steps) verbatim as the matching top-level
   named arguments, reading the renamed `originAppVersion` key, and passes none of the three when a
-  fixture has no `options` — runner contract 1.1.0. `scripts/run-conformance.sh` now defaults
-  `SPEC_REF` to `gateway-track-options`, the branch carrying spec 3.0.0: **36/36**. Running it
-  against `main` (spec 2.0.0) fails 10 of 30 fixtures, correctly — every 2.0.0 fixture body
-  asserts the `sessionId: ""` this release stops sending. Switch the default back to `main` once
-  the spec PR merges. The vendored `conformance/fixtures/` copies were refreshed to the same
-  3.0.0 set. The harness needs no change for the v2 headers: the suite drives the SDK through
-  `AVO_INSPECTOR_MOCK_ENDPOINT` and the runner records and asserts request headers itself.
+  fixture has no `options` — runner contract 1.1.0. `scripts/run-conformance.sh` defaults
+  `SPEC_REF` to `main`, which carries spec 3.0.0 since
+  [spec PR #3](https://github.com/avohq/spec-first-inspector-server-sdk/pull/3) merged
+  on 2026-09-09: **36/36**. The vendored `conformance/fixtures/` copies are a byte-identical
+  snapshot of that same 3.0.0 set. The harness needs no change for the v2 headers: the suite
+  drives the SDK through `AVO_INSPECTOR_MOCK_ENDPOINT` and the runner records and asserts
+  request headers itself.
 - `AvoInspector.Tests` and `AvoInspector.Conformance` now build against
   `src/AvoInspector/AvoInspector.csproj` via `ProjectReference` instead of the published
   `AvoInspector` NuGet package, so CI and `./scripts/run-conformance.sh` exercise this

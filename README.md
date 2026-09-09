@@ -378,11 +378,10 @@ always performed outside the lock.
 ## Conformance
 
 This SDK ships a thin CLI harness (`AvoInspector.Conformance`) implementing version **1.1.0** of the
-[runner contract](https://github.com/avohq/spec-first-inspector-server-sdk/blob/gateway-track-options/conformance/runner-contract.md)
-— it forwards a fixture's `options` object verbatim to the four-parameter overload, and omits the
-argument entirely when the fixture has none. That link points at the `gateway-track-options` branch
-on purpose: 1.1.0 is part of the same open spec PR as spec 3.0.0, so it has no released URL yet, and
-`main` still documents 1.0.0. The suite drives the SDK through
+[runner contract](https://github.com/avohq/spec-first-inspector-server-sdk/blob/main/conformance/runner-contract.md)
+— it forwards the three values from a fixture's `options` object as the matching top-level named
+arguments (`outputReference`, `originHint`, `originAppVersion`), and passes none of them when the
+fixture has no `options`. The suite drives the SDK through
 `AVO_INSPECTOR_MOCK_ENDPOINT`, so the endpoint move to `/inspector/v2/track` needs no harness
 change; the runner records request headers itself and asserts them via a fixture's
 `expected_request_headers`. To run the official suite:
@@ -392,22 +391,22 @@ change; the runner records request headers itself and asserts them via a fixture
 ```
 
 The script builds the harness, fetches the spec repo (which hosts the language-agnostic
-suite-runner + mock server), and runs its fixtures. It defaults to `SPEC_REF=main`, which is
-spec 2.0.0 — 30 fixtures. The `gateway-track-options` branch carries spec **3.0.0**, the version
-`InspectorVersion.SpecVersion` records: the unified `/inspector/v2/track` endpoint and its three
-required request headers, on top of 2.1.0's gateway track options. It is still an open avohq spec
-PR, so point `SPEC_REF` at it to run the full suite — the six gateway fixtures
-(`wire-9`…`wire-13`, `batch-7`) and the header assertions `wire-1` and `batch-1` now carry:
+suite-runner + mock server), and runs its fixtures. It defaults to `SPEC_REF=main`, which carries
+spec **3.0.0** — the version `InspectorVersion.SpecVersion` records: the unified
+`/inspector/v2/track` endpoint and its three required request headers, on top of 2.1.0's gateway
+track options. All **36/36** fixtures pass, including the six gateway fixtures
+(`wire-9`…`wire-13`, `batch-7`) and the header assertions carried by `wire-1` and `batch-1`.
 
-```sh
-SPEC_REF=gateway-track-options ./scripts/run-conformance.sh   # 36/36
-```
+3.0.0 reached `main` in [spec PR #3](https://github.com/avohq/spec-first-inspector-server-sdk/pull/3)
+(merged 2026-09-09). Earlier revisions of this README told you to point `SPEC_REF` at the
+`gateway-track-options` branch that PR was developed on; that branch is tree-identical to the merge,
+so the override still works, but `main` is now the ref to use.
 
 Of the header assertions, `wire-1` pins `env: dev` while `batch-1` pins `env: staging` on that same
 header, so an SDK that hardcodes either value fails one of the two.
 
-The vendored fixtures under `conformance/fixtures/` (a snapshot of the spec's `main` suite) also
-back a self-contained `dotnet test` run.
+The vendored fixtures under `conformance/fixtures/` (a byte-identical snapshot of the spec's `main`
+suite) also back a self-contained `dotnet test` run.
 
 ```sh
 dotnet test       # unit tests + the 13 schema-extraction golden fixtures
