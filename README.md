@@ -124,7 +124,7 @@ All three are `string?`, optional and independent — set any combination, by na
 
 | Parameter | Purpose |
 |---|---|
-| `outputReference` | Which gateway output (destination checkpoint) this observation was bound for — use the reference Avo shows for that output in the gateway's configuration. Leave unset for a gateway-level observation not tied to one output. |
+| `outputReference` | Which gateway output (destination checkpoint) this observation was bound for. Avo mints the value per output — a `<slug>-<shortid>` string, set once — and the Avo MCP prints it on that output's line under `### Outputs` in `get(itemType: "gateway")`. Leave unset for a gateway-level observation not tied to one output. |
 | `originHint` | Identifies the event's upstream source (e.g. `"web"`, `"ios"`, `"android"`). See "Origin hint" below. |
 | `originAppVersion` | App version **of the source named by `originHint`**, not of this SDK instance — a per-event override. See "Origin hint" below for how the two interact. |
 

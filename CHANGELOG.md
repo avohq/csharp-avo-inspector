@@ -82,9 +82,13 @@ harness now implements runner contract **v1.1.0**.
   *forbidding* it: a body that still carries it validates against the 3.0.0 schemas as an unknown
   extra field. Use `streamId`, which is optional and caller-supplied, to correlate events.
 
-  > **Sequencing.** SPEC.md §7.1 carries a dated note that both ingestion parsers still required
-  > `sessionId` as of 2026-09-04, and that a sender dropping it before the backend default ships
-  > loses every event at HTTP `200`. Confirm that change is live before deploying this release.
+  > **Sequencing.** A sender that drops `sessionId` before the backend tolerates its absence loses
+  > every event at HTTP `200`. That backend change is **merged** — `avohq/monorepo#10017`, merged
+  > 2026-09-09, made the field optional in both ingestion parsers (the public decoder resolves an
+  > absent `sessionId` to `""`, and it is removed from both fast-parser required-field guards).
+  > SPEC.md §7.1 still carries the older dated note saying both parsers require it; that note
+  > predates the merge. Merged is not deployed: confirm the change is live in the target
+  > environment before deploying this release.
 
 ### Changed
 
