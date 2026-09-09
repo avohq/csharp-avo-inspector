@@ -82,13 +82,14 @@ harness now implements runner contract **v1.1.0**.
   *forbidding* it: a body that still carries it validates against the 3.0.0 schemas as an unknown
   extra field. Use `streamId`, which is optional and caller-supplied, to correlate events.
 
-  > **Sequencing.** A sender that drops `sessionId` before the backend tolerates its absence loses
-  > every event at HTTP `200`. That backend change is **merged** — `avohq/monorepo#10017`, merged
-  > 2026-09-09, made the field optional in both ingestion parsers (the public decoder resolves an
-  > absent `sessionId` to `""`, and it is removed from both fast-parser required-field guards).
-  > SPEC.md §7.1 still carries the older dated note saying both parsers require it; that note
-  > predates the merge. Merged is not deployed: confirm the change is live in the target
-  > environment before deploying this release.
+  > **Before publishing this to NuGet,** confirm ingestion tolerates a missing `sessionId` in the
+  > target environment — a sender that drops the field ahead of the backend loses every event at
+  > HTTP `200`. The backend change is `avohq/monorepo#10017` (merged 2026-09-09): the public
+  > decoder resolves an absent `sessionId` to `""`, and the field is gone from both fast-parser
+  > required-field guards. SPEC.md §7.1 still carries an older dated note saying both parsers
+  > require it; that note predates the merge. This is a **publish**-time check, not a merge-order
+  > one — nothing consumes `/inspector/v2/track` yet, so no traffic is at risk until a released
+  > version sends it.
 
 ### Changed
 
