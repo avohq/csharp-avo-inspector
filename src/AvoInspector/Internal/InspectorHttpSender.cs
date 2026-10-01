@@ -53,12 +53,6 @@ namespace Avo.Inspector.Internal
             Timeout = Timeout.InfiniteTimeSpan
         };
 
-        private static readonly JsonSerializerOptions SerializerOptions = new JsonSerializerOptions
-        {
-            // SchemaEntry uses its own converter (via attribute); WireEvent uses property-name
-            // attributes. No camelCase policy needed.
-        };
-
         /// <summary>
         /// Serializes and sends one batch. Returns a <see cref="SendResult"/>; never throws.
         /// </summary>
@@ -102,7 +96,7 @@ namespace Avo.Inspector.Internal
             byte[] rawBytes;
             try
             {
-                var json = JsonSerializer.Serialize(batch, SerializerOptions);
+                var json = JsonSerializer.Serialize(batch, InspectorJsonContext.Default.WireEventArray);
                 rawBytes = Encoding.UTF8.GetBytes(json);
             }
             catch (Exception ex)

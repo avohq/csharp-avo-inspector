@@ -10,6 +10,8 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <!-- Nullable BCL annotations are incomplete on netstandard2.0; do not fail the build on them. -->
     <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!-- Run the trim/AOT analyzers on the net8.0 build so reflection-based APIs fail the build. -->
+    <IsAotCompatible Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">true</IsAotCompatible>
 
     <!-- NuGet package metadata -->
     <PackageId>AvoInspector</PackageId>
