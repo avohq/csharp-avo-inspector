@@ -5,7 +5,7 @@ follows [Semantic Versioning](https://semver.org/). The `libVersion` sent on the
 the SDK library version (`InspectorVersion.LibVersion`), independent of the spec contract
 version it implements (`InspectorVersion.SpecVersion`).
 
-## [Unreleased]
+## [1.1.1] — 2026-10-06
 
 ### Fixed
 
@@ -156,5 +156,6 @@ Initial release. Implements `avohq/spec-first-inspector-server-sdk` **v1.0.0**.
   destroy post-state, scheduled flush, transient-failure no-requeue, gzip).
 - Multi-targets `netstandard2.0` and `net8.0`.
 
+[1.1.1]: https://github.com/avohq/csharp-avo-inspector/releases/tag/v1.1.1
 [1.1.0]: https://github.com/avohq/csharp-avo-inspector/releases/tag/v1.1.0
 [1.0.0]: https://github.com/avohq/csharp-avo-inspector/releases/tag/v1.0.0
