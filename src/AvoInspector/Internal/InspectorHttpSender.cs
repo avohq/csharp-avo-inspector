@@ -53,11 +53,13 @@ namespace Avo.Inspector.Internal
             Timeout = Timeout.InfiniteTimeSpan
         };
 
-        private static readonly JsonSerializerOptions SerializerOptions = new JsonSerializerOptions
-        {
-            // SchemaEntry uses its own converter (via attribute); WireEvent uses property-name
-            // attributes. No camelCase policy needed.
-        };
+        /// <summary>
+        /// Serializes a batch to the UTF-8 JSON wire body (SPEC.md §7.3). Uses the source-generated
+        /// <see cref="InspectorJsonContext"/>, not the reflection-based overload, so it works in
+        /// trimmed and Native AOT host applications.
+        /// </summary>
+        internal static byte[] SerializeBody(WireEvent[] batch)
+            => Encoding.UTF8.GetBytes(JsonSerializer.Serialize(batch, InspectorJsonContext.Default.WireEventArray));
 
         /// <summary>
         /// Serializes and sends one batch. Returns a <see cref="SendResult"/>; never throws.
@@ -102,8 +104,7 @@ namespace Avo.Inspector.Internal
             byte[] rawBytes;
             try
             {
-                var json = JsonSerializer.Serialize(batch, SerializerOptions);
-                rawBytes = Encoding.UTF8.GetBytes(json);
+                rawBytes = SerializeBody(batch);
             }
             catch (Exception ex)
             {

@@ -5,6 +5,17 @@ follows [Semantic Versioning](https://semver.org/). The `libVersion` sent on the
 the SDK library version (`InspectorVersion.LibVersion`), independent of the spec contract
 version it implements (`InspectorVersion.SpecVersion`).
 
+## [Unreleased]
+
+### Fixed
+
+- **Native AOT and trimmed host applications.** The wire body was serialized with the
+  reflection-based `JsonSerializer` overload, which Native AOT disables. Every send failed with
+  `request serialization failed: InvalidOperationException` while `TrackSchemaFromEvent` still
+  returned normally, so nothing reached Avo. The body is now serialized through a source-generated
+  `JsonSerializerContext`; the wire body is byte-for-byte unchanged. The `net8.0` build now enables
+  `IsAotCompatible`, so the trim and AOT analyzers catch any regression.
+
 ## [1.1.0] — 2026-09-04
 
 Implements `avohq/spec-first-inspector-server-sdk` **v3.0.0** (was v1.0.0), and its conformance
