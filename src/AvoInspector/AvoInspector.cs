@@ -136,23 +136,9 @@ namespace Avo.Inspector
             string? publicEncryptionKey)
         {
             // SPEC.md §4.1 — validate apiKey, then version (exact messages). Whitespace-only is empty.
-            //
-            // Trim the key first and store only the trimmed value. An Inspector API key is a token,
-            // so surrounding whitespace is never significant and trimming cannot make a working key
-            // stop working. What it does fix is the commonest way this goes wrong: a key pasted with
-            // a trailing newline. Without the trim that key would fail the §7.2 header guard on
-            // every send, which in a batching sender that never throws at the caller means
-            // SendStatus.Error for the life of the process — silent in prod, where logging is off by
-            // default. Trimming costs no security, because Trim strips only surrounding whitespace:
-            // it repairs exactly the accident — a trailing CR or LF with nothing after it — while a
-            // control character with content on both sides survives it, and NUL survives anywhere
-            // since NUL is not whitespace. Whatever survives, the sender still rejects before the wire.
-            //
-            // Trimming once here rather than at each use also keeps the header copy and the body
-            // copy of apiKey byte-identical, which the conformance runner asserts. Whitespace-only
-            // still throws, because Trim leaves it empty and IsNullOrWhiteSpace still catches it.
-            var trimmedApiKey = apiKey?.Trim();
-            if (string.IsNullOrWhiteSpace(trimmedApiKey))
+            // The key is kept verbatim (§4.1, §7.2), as in the Node, Java and Go SDKs: the api-key
+            // header and the body's apiKey copy carry exactly what the caller passed (AVO-3827).
+            if (string.IsNullOrWhiteSpace(apiKey))
             {
                 throw new ArgumentException(NoApiKeyMessage);
             }
@@ -164,13 +150,8 @@ namespace Avo.Inspector
             // SPEC.md §4.1 — a control character in the apiKey is fatal at construction, with the
             // exact message above. The key is the only caller-supplied value that reaches a request
             // header (§7.2), and CR, LF or NUL there can terminate the header line and append
-            // attacker-chosen headers to every request the instance makes.
-            //
-            // Ordered after the trim deliberately: the commonest way this goes wrong is a key pasted
-            // with a trailing newline, and Trim repairs exactly that — surrounding whitespace only,
-            // so a control character with content on either side survives it, and NUL survives
-            // anywhere since NUL is not whitespace. A pasted key therefore still works, while a key
-            // that genuinely carries an embedded control character fails loudly here.
+            // attacker-chosen headers to every request the instance makes. That includes a key
+            // pasted with a trailing newline, which fails here rather than on every send.
             //
             // Deliberately redundant with the §7.2 send-time refusal in InspectorHttpSender, which
             // is what actually protects the wire: on its own that guard turns a configuration
@@ -178,7 +159,7 @@ namespace Avo.Inspector
             // every send, and logging is off by default outside dev). This throw is for the
             // developer, the sender's check is for the wire. It calls the sender's own predicate so
             // the two can never disagree, and names the fault without echoing the key (§7.5.1).
-            if (!InspectorHttpSender.IsSafeHeaderValue(trimmedApiKey))
+            if (!InspectorHttpSender.IsSafeHeaderValue(apiKey))
             {
                 throw new ArgumentException(ControlCharacterApiKeyMessage);
             }
@@ -190,7 +171,7 @@ namespace Avo.Inspector
                 env = AvoInspectorEnv.Dev;
             }
 
-            _apiKey = trimmedApiKey!;
+            _apiKey = apiKey!;
             _appVersion = version!;
             _appName = appName ?? string.Empty;
             _env = env;
