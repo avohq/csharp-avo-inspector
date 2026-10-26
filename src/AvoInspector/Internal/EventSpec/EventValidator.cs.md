@@ -35,7 +35,8 @@ the web and Android SDKs).
      pattern. A string over 10,000 characters is not checked (logged). Patterns compile with
      `RegexOptions.ECMAScript` (JavaScript's ASCII `\d`/`\w`), falling back to
      `RegexOptions.CultureInvariant` when that option rejects the pattern; an invalid pattern is
-     skipped. Each match has a 100 ms timeout; a timeout skips the pattern.
+     skipped. Each match has a 100 ms timeout; a timeout skips the pattern and caches it as skipped, so it
+     never runs again.
    - Min/max: only `RawValues.TryGetNumber` values can be in range; `NaN` never is. A range that is
      not exactly two comma-separated parts parsing as invariant doubles (empty = open) is skipped.
 5. Compiled patterns and parsed allowed-value lists are cached process-wide by wire string (null for

@@ -220,9 +220,10 @@ event is sent without value checks, as before; a failed fetch is retried after 5
 (60 for a 404). The first track of an event therefore waits for its spec fetch;
 `Flush()` waits for tracks still waiting on a spec, within its timeout. Checks are bounded:
 a list of more than 1,000 items, or a string of more than 10,000 characters against a
-regex, is not checked, and each regex match has a 100 ms budget.
+regex, is not checked, and each regex match has a 100 ms budget (a pattern that runs out is skipped from then on).
 
-**`Prod` is unchanged:** no spec fetch, no value checks, no values sent.
+**`Prod` is unchanged:** no spec fetch, no value checks, no values sent, and no
+`publicEncryptionKey` on the body.
 
 ### Showing values in the Debugger: `PublicEncryptionKey`
 

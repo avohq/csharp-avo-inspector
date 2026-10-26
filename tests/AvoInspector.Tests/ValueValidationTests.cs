@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Avo.Inspector.Internal;
 using Avo.Inspector.Internal.EventSpec;
 using Xunit;
 
@@ -304,6 +305,14 @@ namespace Avo.Inspector.Tests
                 Assert.False(inspector.IsEncryptionActiveForTesting);
                 await inspector.Flush();
                 Assert.Empty(server.SpecRequests); // prod also ignores the mock endpoint, so nothing reaches it
+
+                // The prod body is the 1.1.x one: no key, no metadata, no values.
+                var body = InspectorHttpSender.SerializeBody(new[] { inspector.BuildWireEventForTesting("E", Props.Of(("plan", "Pro"))) });
+                using var doc = JsonDocument.Parse(body);
+                var evt = doc.RootElement[0];
+                Assert.False(evt.TryGetProperty("publicEncryptionKey", out _));
+                Assert.False(evt.TryGetProperty("eventSpecMetadata", out _));
+                Assert.Equal("[{\"propertyName\":\"plan\",\"propertyType\":\"string\"}]", evt.GetProperty("eventProperties").GetRawText());
             }
         }
 

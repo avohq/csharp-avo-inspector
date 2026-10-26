@@ -169,8 +169,9 @@ An extension beyond the server SDK spec, ported from `node-avo-inspector` 2.0.0.
 
 - **Construction.** Outside `prod` the instance creates an `EventSpecFetcher` (with the trimmed
   `apiKey`) and an `EventSpecCache`. `PublicEncryptionKey` (options constructor only; the string
-  constructor passes `null`) is normalized like a gateway hint; when set it is sent on every body as
-  `publicEncryptionKey`, and outside `prod` it is parsed into a `ValueEncryptor`. A key that cannot
+  constructor passes `null`) is used only outside `prod`: normalized like a gateway hint, sent on
+  every body as `publicEncryptionKey` when set, and parsed into a `ValueEncryptor`. A `prod` body
+  never carries it. A key that cannot
   be used logs **one** always-on warning naming the fault (never the key), and values are not sent.
   In `prod` neither the fetcher, the cache nor the encryptor exists.
 - **Validation step.** Runs after sampling (a sampled-out event never fetches). `ValidateAsync`
@@ -283,6 +284,6 @@ Constructor options, the sampling rate, and the process-wide logging flag persis
 <!-- The class also exposes a small set of `internal` test-only hooks
 (SetSamplingRateForTesting, CurrentSamplingRate, IsDestroyed, EffectiveBatchSize,
 PendingBatchCount, ResolvedEndpointForTesting, ShouldLogForTesting, IsValidationActiveForTesting,
-IsEncryptionActiveForTesting). These are deliberately NOT part
+IsEncryptionActiveForTesting, BuildWireEventForTesting). These are deliberately NOT part
 of the public API; the sampling-rate setter is internal specifically so external callers cannot force
 samplingRate = 0 and silently disable telemetry. -->

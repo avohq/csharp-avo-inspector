@@ -62,8 +62,8 @@ namespace Avo.Inspector
         private bool _disableBatchTimer;
 
         // Event spec validation and value encryption (AVO-4069). The fetcher and cache exist only in
-        // dev and staging; the encryptor only there and with a usable PublicEncryptionKey. The key
-        // itself is sent on every body when configured, as the Node SDK does.
+        // dev and staging; the encryptor only there and with a usable PublicEncryptionKey. There the
+        // key itself is sent on every body when configured, as the Node SDK does.
         private EventSpecFetcher? _specFetcher;
         private EventSpecCache? _specCache;
         private ValueEncryptor? _encryptor;
@@ -246,10 +246,10 @@ namespace Avo.Inspector
             _disableBatchTimer = disableBatchTimer == true;
 
             // AVO-4069 — event spec validation and value encryption run in dev and staging only;
-            // prod sends the schema alone, as before.
-            _publicEncryptionKey = NormalizeHint(publicEncryptionKey);
+            // prod sends the schema alone, as before (not even the encryption key).
             if (env != AvoInspectorEnv.Prod)
             {
+                _publicEncryptionKey = NormalizeHint(publicEncryptionKey);
                 _specFetcher = new EventSpecFetcher(_apiKey);
                 _specCache = new EventSpecCache();
                 if (_publicEncryptionKey != null)
@@ -1084,5 +1084,11 @@ namespace Avo.Inspector
         internal bool IsValidationActiveForTesting => _specFetcher != null;
 
         internal bool IsEncryptionActiveForTesting => _encryptor != null;
+
+        // The body an unvalidated event would get, without sending it (a prod instance ignores the
+        // mock endpoint, so its sends cannot be captured).
+        internal WireEvent BuildWireEventForTesting(string eventName, IDictionary<string, object?> eventProperties)
+            => BuildWireEvent(eventName, string.Empty, 1.0, ExtractSchema(eventProperties),
+                null, null, null, eventProperties, null);
     }
 }

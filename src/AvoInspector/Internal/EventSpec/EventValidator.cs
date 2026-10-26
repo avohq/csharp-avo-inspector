@@ -20,7 +20,7 @@ namespace Avo.Inspector.Internal.EventSpec
     /// against the constraints.</para>
     /// <para>Validation runs on the track path, so it is bounded: a list of more than 1,000 items is
     /// not checked, a string longer than 10,000 characters is not checked against regex patterns, and
-    /// each regex match has a 100 ms budget (a pattern that runs out is skipped). Logs carry spec
+    /// each regex match has a 100 ms budget (a pattern that runs out is skipped from then on). Logs carry spec
     /// strings and counts, never property values.</para>
     /// </remarks>
     internal static class EventValidator
@@ -333,6 +333,8 @@ namespace Avo.Inspector.Internal.EventSpec
                 catch (RegexMatchTimeoutException)
                 {
                     Logger.Error(shouldLog, "Regex pattern skipped (match timed out): " + pair.Key);
+                    // Never run a pattern that has timed out again, on later items or events.
+                    CacheConstraint<Regex?>(RegexCache, pair.Key, null);
                     continue;
                 }
                 if (!matched)

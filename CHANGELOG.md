@@ -29,7 +29,7 @@ fetch, no value checks, no values sent.
 - **`PublicEncryptionKey` option.** With a hex P-256 public key, `Dev` and `Staging` send each
   property's value encrypted (ECIES, AES-256-GCM, the web and Node SDKs' format) as
   `encryptedPropertyValue`, so the Debugger can show decrypted values. The key is sent on the
-  body as `publicEncryptionKey`. Lists' values are not sent; every property stays in the schema.
+  body as `publicEncryptionKey` (never in `prod`). Lists' values are not sent; every property stays in the schema.
   Needs .NET 8 or later; on older runtimes the key is ignored with a warning at construction.
 - **Never blocks or drops an event.** A failed, timed-out (10 s) or missing spec sends the event
   without validation. Specs are cached per instance for 60 s or 50 uses; a 404 is cached for
