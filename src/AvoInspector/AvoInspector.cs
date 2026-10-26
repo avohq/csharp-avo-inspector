@@ -406,9 +406,8 @@ namespace Avo.Inspector
                 }
 
                 // SPEC.md §7.7 — per-event sampling at enqueue, BEFORE buffering (and before any
-                // event spec fetch). Drop when random >= samplingRate so that samplingRate 0.0
-                // ALWAYS drops.
-                if (ThreadSafeRandom.NextDouble() >= samplingSnapshot)
+                // event spec fetch).
+                if (IsSampledOut(ThreadSafeRandom.NextDouble(), samplingSnapshot))
                 {
                     return eventSchema;
                 }
@@ -1044,6 +1043,13 @@ namespace Avo.Inspector
             }
             return ProductionEndpoint;
         }
+
+        /// <summary>
+        /// SPEC.md §7.7 — an event is dropped when <paramref name="random"/> (from <c>[0.0, 1.0)</c>)
+        /// is greater than <paramref name="samplingRate"/>, as in the Node, Java and Go SDKs. An event
+        /// whose random value equals the rate is kept. At rate <c>0.0</c> every non-zero draw drops.
+        /// </summary>
+        internal static bool IsSampledOut(double random, double samplingRate) => random > samplingRate;
 
         // ----- test-only hooks (not part of the documented public API; SPEC runner-contract) -----
 

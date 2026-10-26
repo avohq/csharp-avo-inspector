@@ -149,9 +149,10 @@ flush trigger fires.
 - **Post-`Destroy` no-op:** resolves with an empty list, no enqueue, no HTTP call. Re-checked again
   under the lock right before enqueue to handle a mid-flight `Destroy`.
 - **Sampling (SPEC.md §7.7):** snapshots the current rate under the lock and drops the event (returns
-  the extracted schema, unsent) when `ThreadSafeRandom.NextDouble() >= samplingRate`. The `>=`
-  comparison guarantees `samplingRate == 0.0` **always** drops. Sampling is applied at enqueue,
-  before buffering.
+  the extracted schema, unsent) when `ThreadSafeRandom.NextDouble() > samplingRate`, through
+  `internal static bool IsSampledOut(double random, double samplingRate)`. A draw equal to the rate
+  is kept, as in the Node, Java and Go SDKs; at `samplingRate == 0.0` every non-zero draw drops.
+  Sampling is applied at enqueue, before buffering.
 - **Enqueue & overflow (SPEC.md §12.5):** appends a `WireEvent`; while `count > maxQueueSize`, drops
   the **oldest (FIFO)** entries and logs a **count only** (never event contents).
 - **Size trigger (SPEC.md §12.3/§12.4):** when `count >= effectiveBatchSize`, the batch is swapped

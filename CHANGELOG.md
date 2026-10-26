@@ -42,6 +42,12 @@ fetch, no value checks, no values sent.
 - **The body is unchanged without a spec or a key.** None of the new keys is sent then, so the
   wire body is identical to 1.1.x.
 
+### Fixed — sampling keeps an event whose draw equals the rate (AVO-3827)
+
+- **An event is dropped only when its random draw is above `samplingRate`** (SPEC.md §7.7), as
+  in the Node, Java and Go SDKs. 1.1.x also dropped an event whose draw was exactly equal to
+  the rate. At a rate of `0.0` every event is still dropped, except a draw of exactly `0.0`.
+
 ## [1.1.1] — 2026-10-06
 
 ### Fixed

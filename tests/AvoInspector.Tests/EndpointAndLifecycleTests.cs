@@ -317,6 +317,21 @@ namespace Avo.Inspector.Tests
             }
         }
 
+        // SPEC.md §7.7 (AVO-3827): drop only when random > samplingRate, so a draw equal to the
+        // rate is kept, as in the Node, Java and Go SDKs.
+        [Theory]
+        [InlineData(0.5, 0.5, false)]
+        [InlineData(0.25, 0.25, false)]
+        [InlineData(0.0, 0.0, false)]
+        [InlineData(0.5000001, 0.5, true)]
+        [InlineData(0.4999999, 0.5, false)]
+        [InlineData(0.0000001, 0.0, true)]
+        [InlineData(0.9999999, 1.0, false)]
+        public void Sampling_drops_only_when_random_is_above_the_rate(double random, double rate, bool dropped)
+        {
+            Assert.Equal(dropped, AvoInspector.IsSampledOut(random, rate));
+        }
+
         [Fact]
         public async Task Destroy_discards_buffer_persists_state_and_makes_track_a_noop()
         {
