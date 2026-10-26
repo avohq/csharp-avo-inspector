@@ -5,6 +5,43 @@ follows [Semantic Versioning](https://semver.org/). The `libVersion` sent on the
 the SDK library version (`InspectorVersion.LibVersion`), independent of the spec contract
 version it implements (`InspectorVersion.SpecVersion`).
 
+## [Unreleased]
+
+### Added — value checks in `dev` and `staging` (AVO-4069)
+
+Ports the event spec validation of `node-avo-inspector` 2.0.0. `prod` is unchanged: no spec
+fetch, no value checks, no values sent.
+
+- **Property values are checked against the tracking plan.** Before sending an event, a `Dev`
+  or `Staging` instance fetches its spec from `GET /trackingPlan/eventSpec` (`apiKey`,
+  `eventName`, `streamId`) and checks every value against the spec's allowed values, pinned
+  values, regex patterns and min/max ranges, on each property and one level into objects and
+  lists of objects. A value outside a property's allowed values shows up as a value issue in
+  the Inspector Debugger, which showed "Validation didn't run" for every C# source until now.
+- **Every event and variant in the spec is checked.** Each constraint applies to the tracking-plan
+  event and variant IDs that set it, and failures are sent as `failedEventIds` on the property
+  (or its children), with the spec's `eventSpecMetadata` on the event. Like Node 2.0.0, the
+  property type is not compared with the spec (Avo already compares the schema with the plan,
+  and the type names differ), and `passedEventIds` is not sent.
+- **Gateway events are checked at their checkpoint.** `originHint` and `outputReference` are
+  passed to the spec fetch (normalized as on the track body), so a gateway key answers the spec
+  of the gateway input or of that output. Each checkpoint's spec is cached and fetched on its own.
+- **`PublicEncryptionKey` option.** With a hex P-256 public key, `Dev` and `Staging` send each
+  property's value encrypted (ECIES, AES-256-GCM, the web and Node SDKs' format) as
+  `encryptedPropertyValue`, so the Debugger can show decrypted values. The key is sent on the
+  body as `publicEncryptionKey`. Lists' values are not sent; every property stays in the schema.
+  Needs .NET 8 or later; on older runtimes the key is ignored with a warning at construction.
+- **Never blocks or drops an event.** A failed, timed-out (10 s) or missing spec sends the event
+  without validation. Specs are cached per instance for 60 s or 50 uses; a 404 is cached for
+  60 s and any other failure for 5 s; concurrent tracks of one event share one fetch; at most
+  1,000 events wait for a spec at once, across instances. `Flush()` first waits, within its
+  timeout, for tracks still waiting on a spec, and `Destroy()` abandons spec fetches.
+- **Native AOT and trimming.** The spec response is read with `JsonDocument` and values are
+  written with `Utf8JsonWriter`, so neither needs reflection; `eventSpecMetadata` goes through
+  the source-generated context. No new package dependency.
+- **The body is unchanged without a spec or a key.** None of the new keys is sent then, so the
+  wire body is identical to 1.1.x.
+
 ## [1.1.1] — 2026-10-06
 
 ### Fixed

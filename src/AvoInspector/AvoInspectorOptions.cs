@@ -48,5 +48,14 @@ namespace Avo.Inspector
         /// <c>false</c>). Serverless deployments SHOULD set this <c>true</c> (SPEC.md §12.2, §11.2).
         /// </summary>
         public bool? DisableBatchTimer { get; set; }
+
+        /// <summary>
+        /// Hex P-256 public key from your Avo workspace (OPTIONAL). In <c>dev</c> and <c>staging</c>,
+        /// property values are encrypted with it and sent as <c>encryptedPropertyValue</c>, so the
+        /// Inspector Debugger can show them; only the holder of the matching private key can read
+        /// them. Without it, no property values are sent. Never used in <c>prod</c>. Encryption needs
+        /// .NET 8 or later; on older runtimes the key is ignored with a warning.
+        /// </summary>
+        public string? PublicEncryptionKey { get; set; }
     }
 }

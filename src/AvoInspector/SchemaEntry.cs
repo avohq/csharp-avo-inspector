@@ -39,6 +39,20 @@ namespace Avo.Inspector
         /// </summary>
         public object? Children { get; set; }
 
+        /// <summary>
+        /// Tracking-plan event IDs whose value constraints this property's value breaks (event spec
+        /// validation, dev and staging only). Wire-only: set on the copy of the schema that is sent,
+        /// never on the schema returned to the caller. Serialized as <c>failedEventIds</c> when set.
+        /// </summary>
+        internal List<string>? FailedEventIds { get; set; }
+
+        /// <summary>
+        /// The property's value, encrypted for the Inspector Debugger (dev and staging, with a
+        /// public encryption key). Wire-only, like <see cref="FailedEventIds"/>. Serialized as
+        /// <c>encryptedPropertyValue</c> when set.
+        /// </summary>
+        internal string? EncryptedPropertyValue { get; set; }
+
         /// <summary>Creates an empty entry.</summary>
         public SchemaEntry() { }
 

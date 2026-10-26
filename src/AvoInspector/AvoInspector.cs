@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Avo.Inspector.Internal;
+using Avo.Inspector.Internal.EventSpec;
 
 namespace Avo.Inspector
 {
@@ -24,6 +26,7 @@ namespace Avo.Inspector
     public sealed class AvoInspector
     {
         private const string ProductionEndpoint = "https://api.avo.app/inspector/v2/track";
+        private const string ProductionSpecBaseUrl = "https://api.avo.app";
         private const string MockEndpointEnvVar = "AVO_INSPECTOR_MOCK_ENDPOINT";
         private const int DefaultFlushTimeoutMs = 10_000; // SPEC.md §4.6
 
@@ -40,6 +43,11 @@ namespace Avo.Inspector
         // to reads on all instances across threads.
         private static volatile bool _shouldLog;
 
+        // Events waiting for an event spec fetch, across every instance. Past the cap, further
+        // events are sent without validation instead of waiting (as in the Node SDK).
+        private const int MaxWaitingValidations = 1_000;
+        private static int _waitingValidations;
+
         private readonly object _lock = new object();
 
         // Constructor options — fixed at construction (SPEC.md §5). Treated as immutable after init.
@@ -53,10 +61,21 @@ namespace Avo.Inspector
         private int _maxQueueSize;
         private bool _disableBatchTimer;
 
+        // Event spec validation and value encryption (AVO-4069). The fetcher and cache exist only in
+        // dev and staging; the encryptor only there and with a usable PublicEncryptionKey. The key
+        // itself is sent on every body when configured, as the Node SDK does.
+        private EventSpecFetcher? _specFetcher;
+        private EventSpecCache? _specCache;
+        private ValueEncryptor? _encryptor;
+        private string? _publicEncryptionKey;
+
         // Mutable state guarded by _lock.
         private double _samplingRate = 1.0;
         private List<WireEvent> _pendingBatch = new List<WireEvent>();
         private readonly HashSet<Task> _pendingSends = new HashSet<Task>();
+        // Tracks waiting on an event spec, each completed once its event is enqueued, so Flush can
+        // wait for them before it swaps out the batch.
+        private readonly HashSet<Task> _pendingValidations = new HashSet<Task>();
         private bool _destroyed;
         private Timer? _flushTimer;
         // Cancelled by Destroy() to abort in-flight HTTP sends (SPEC.md §4.5 — abandon in-flight).
@@ -74,7 +93,8 @@ namespace Avo.Inspector
                 throw new ArgumentNullException(nameof(options));
             }
             Initialize(options.ApiKey, options.Env.ToWireString(), options.Version, options.AppName,
-                options.BatchSize, options.BatchFlushSeconds, options.MaxQueueSize, options.DisableBatchTimer);
+                options.BatchSize, options.BatchFlushSeconds, options.MaxQueueSize, options.DisableBatchTimer,
+                options.PublicEncryptionKey);
         }
 
         /// <summary>
@@ -101,7 +121,7 @@ namespace Avo.Inspector
             int? maxQueueSize = null,
             bool? disableBatchTimer = null)
         {
-            Initialize(apiKey, env, version, appName, batchSize, batchFlushSeconds, maxQueueSize, disableBatchTimer);
+            Initialize(apiKey, env, version, appName, batchSize, batchFlushSeconds, maxQueueSize, disableBatchTimer, null);
         }
 
         private void Initialize(
@@ -112,7 +132,8 @@ namespace Avo.Inspector
             int? batchSize,
             double? batchFlushSeconds,
             int? maxQueueSize,
-            bool? disableBatchTimer)
+            bool? disableBatchTimer,
+            string? publicEncryptionKey)
         {
             // SPEC.md §4.1 — validate apiKey, then version (exact messages). Whitespace-only is empty.
             //
@@ -223,6 +244,25 @@ namespace Avo.Inspector
             }
 
             _disableBatchTimer = disableBatchTimer == true;
+
+            // AVO-4069 — event spec validation and value encryption run in dev and staging only;
+            // prod sends the schema alone, as before.
+            _publicEncryptionKey = NormalizeHint(publicEncryptionKey);
+            if (env != AvoInspectorEnv.Prod)
+            {
+                _specFetcher = new EventSpecFetcher(_apiKey);
+                _specCache = new EventSpecCache();
+                if (_publicEncryptionKey != null)
+                {
+                    _encryptor = ValueEncryptor.TryCreate(_publicEncryptionKey, out var encryptionError);
+                    if (_encryptor == null)
+                    {
+                        // Once, at construction, so a bad key does not log on every event. Names the
+                        // fault, never the key. Validation still runs; values are not sent.
+                        Logger.Warn(encryptionError + "; property values will not be sent.");
+                    }
+                }
+            }
 
             // SPEC.md §12.3 / §11.4 — best-effort scheduled flush. A managed Timer fires on
             // background thread-pool threads and never holds the process open. Disabled in dev
@@ -352,27 +392,94 @@ namespace Avo.Inspector
                 }
             }
 
+            IReadOnlyList<SchemaEntry> eventSchema;
+            string resolvedStreamId;
+            double samplingSnapshot;
             try
             {
-                var eventSchema = ExtractSchema(eventProperties);
-                var resolvedStreamId = ResolveStreamId(streamId);
+                eventSchema = ExtractSchema(eventProperties);
+                resolvedStreamId = ResolveStreamId(streamId);
 
-                double samplingSnapshot;
                 lock (_lock)
                 {
                     samplingSnapshot = _samplingRate;
                 }
 
-                // SPEC.md §7.7 — per-event sampling at enqueue, BEFORE buffering. Drop when
-                // random >= samplingRate so that samplingRate 0.0 ALWAYS drops.
+                // SPEC.md §7.7 — per-event sampling at enqueue, BEFORE buffering (and before any
+                // event spec fetch). Drop when random >= samplingRate so that samplingRate 0.0
+                // ALWAYS drops.
                 if (ThreadSafeRandom.NextDouble() >= samplingSnapshot)
                 {
                     return eventSchema;
                 }
+            }
+            catch (Exception ex)
+            {
+                // SPEC.md §4.2.5 / §7.5 — synchronous internal error before enqueue. Reject with the
+                // exact spec string (never the original error object).
+                Logger.Error(_shouldLog, "internal error: " + ex.GetType().Name);
+                throw new AvoInspectorTrackException();
+            }
 
+            if (_specFetcher == null)
+            {
+                return await EnqueueAsync(
+                    eventName, resolvedStreamId, samplingSnapshot, eventSchema, eventProperties,
+                    outputReference, originHint, originAppVersion, null).ConfigureAwait(false);
+            }
+
+            // Dev and staging (AVO-4069): validate the values against the event spec first. Flush
+            // waits on `enqueued`, which completes once the event is in the batch (or its send has
+            // started), so a Flush during the spec fetch still sends this event.
+            var enqueued = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (_lock)
+            {
+                _pendingValidations.Add(enqueued.Task);
+            }
+            Task<IReadOnlyList<SchemaEntry>> result;
+            try
+            {
+                var validation = await ValidateAsync(
+                    eventName, resolvedStreamId, eventSchema, eventProperties, outputReference, originHint)
+                    .ConfigureAwait(false);
+                // EnqueueAsync enqueues and dispatches synchronously, before its first await.
+                result = EnqueueAsync(
+                    eventName, resolvedStreamId, samplingSnapshot, eventSchema, eventProperties,
+                    outputReference, originHint, originAppVersion, validation);
+            }
+            finally
+            {
+                lock (_lock)
+                {
+                    _pendingValidations.Remove(enqueued.Task);
+                }
+                enqueued.TrySetResult(true);
+            }
+            return await result.ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Builds the wire event, enqueues it into the pending batch, and dispatches a send when a
+        /// flush trigger fires (SPEC.md §4.2). Everything up to the dispatch runs synchronously,
+        /// before the returned task's first await.
+        /// </summary>
+        private async Task<IReadOnlyList<SchemaEntry>> EnqueueAsync(
+            string eventName,
+            string resolvedStreamId,
+            double samplingSnapshot,
+            IReadOnlyList<SchemaEntry> eventSchema,
+            IDictionary<string, object?>? eventProperties,
+            string? outputReference,
+            string? originHint,
+            string? originAppVersion,
+            EventValidationResult? validation)
+        {
+            Task<SendResult>? triggeredSend = null;
+            try
+            {
                 var body = BuildWireEvent(
                     eventName, resolvedStreamId, samplingSnapshot, eventSchema,
-                    outputReference, originHint, originAppVersion);
+                    outputReference, originHint, originAppVersion, eventProperties, validation);
 
                 List<WireEvent>? batchToSend = null;
                 var dropped = 0;
@@ -405,23 +512,10 @@ namespace Avo.Inspector
                     Logger.Error(_shouldLog, "maxQueueSize exceeded; dropped " + dropped + " oldest event(s).");
                 }
 
-                Task<SendResult>? triggeredSend = null;
                 if (batchToSend != null)
                 {
                     triggeredSend = DispatchSend(batchToSend);
                 }
-
-                // SPEC.md §4.2.4 / §7.5 — immediate-send mode: the per-call HTTP outcome is
-                // observable. A non-200 resolves []; network error/timeout resolves the schema.
-                if (_batchSize == 1 && triggeredSend != null)
-                {
-                    var result = await triggeredSend.ConfigureAwait(false);
-                    return result.Status == SendStatus.Non200
-                        ? (IReadOnlyList<SchemaEntry>)new List<SchemaEntry>()
-                        : eventSchema;
-                }
-
-                return eventSchema;
             }
             catch (Exception ex)
             {
@@ -430,6 +524,18 @@ namespace Avo.Inspector
                 Logger.Error(_shouldLog, "internal error: " + ex.GetType().Name);
                 throw new AvoInspectorTrackException();
             }
+
+            // SPEC.md §4.2.4 / §7.5 — immediate-send mode: the per-call HTTP outcome is
+            // observable. A non-200 resolves []; network error/timeout resolves the schema.
+            if (_batchSize == 1 && triggeredSend != null)
+            {
+                var result = await triggeredSend.ConfigureAwait(false);
+                return result.Status == SendStatus.Non200
+                    ? (IReadOnlyList<SchemaEntry>)new List<SchemaEntry>()
+                    : eventSchema;
+            }
+
+            return eventSchema;
         }
 
         /// <summary>
@@ -441,6 +547,32 @@ namespace Avo.Inspector
         /// <param name="timeoutMs">Maximum time to wait for in-flight sends (default 10,000 ms).</param>
         public async Task Flush(int timeoutMs = DefaultFlushTimeoutMs)
         {
+            var started = Stopwatch.StartNew();
+
+            // Dev and staging: tracks still waiting for their event spec are enqueued first, within
+            // the same timeout, so this flush sends them too.
+            Task[] validations;
+            lock (_lock)
+            {
+                if (_destroyed)
+                {
+                    return;
+                }
+                validations = _pendingValidations.ToArray();
+            }
+            if (validations.Length > 0)
+            {
+                try
+                {
+                    await Task.WhenAny(Task.WhenAll(validations), Task.Delay(timeoutMs)).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // SPEC.md §4.6 — flush() MUST resolve in all cases.
+                }
+            }
+            var remainingMs = (int)Math.Max(0, timeoutMs - started.ElapsedMilliseconds);
+
             List<WireEvent>? batch = null;
             lock (_lock)
             {
@@ -473,7 +605,7 @@ namespace Avo.Inspector
             try
             {
                 var all = Task.WhenAll(sends);
-                await Task.WhenAny(all, Task.Delay(timeoutMs)).ConfigureAwait(false);
+                await Task.WhenAny(all, Task.Delay(remainingMs)).ConfigureAwait(false);
             }
             catch
             {
@@ -495,11 +627,13 @@ namespace Avo.Inspector
                 _destroyed = true;
                 _pendingBatch = new List<WireEvent>();
                 _pendingSends.Clear(); // abandon in-flight (pendingCount -> 0)
+                _pendingValidations.Clear();
                 timer = _flushTimer;
                 _flushTimer = null;
             }
             timer?.Dispose();
-            // Abandon in-flight requests (SPEC.md §4.5): cancel the token so any active HTTP send
+            _specCache?.Clear();
+            // Abandon in-flight requests (event spec fetches included) (SPEC.md §4.5): cancel the token so any active HTTP send
             // aborts instead of completing on the wire. Not disposed — in-flight sends may still
             // hold a linked token derived from it.
             try { _cts.Cancel(); }
@@ -544,7 +678,9 @@ namespace Avo.Inspector
             IReadOnlyList<SchemaEntry> eventSchema,
             string? rawOutputReference,
             string? rawOriginHint,
-            string? rawOriginAppVersion)
+            string? rawOriginAppVersion,
+            IDictionary<string, object?>? eventProperties,
+            EventValidationResult? validation)
         {
             var outputReference = NormalizeHint(rawOutputReference);
             var originHint = NormalizeHint(rawOriginHint);
@@ -562,6 +698,30 @@ namespace Avo.Inspector
             // before existed only because /inspector/v1/track discarded the coordinates and
             // dropped null-appVersion events outright.
 
+            // The body gets its own copy of the schema when it carries values or validation
+            // results, so nothing is added to the schema the call resolves with. Otherwise the body
+            // is exactly the 1.1.x one.
+            var properties = eventSchema;
+            if (validation != null || (_encryptor != null && eventProperties != null))
+            {
+                var copy = CloneSchema(eventSchema);
+                if (_encryptor != null && eventProperties != null)
+                {
+                    EncryptValues(copy, eventProperties);
+                }
+                if (validation != null)
+                {
+                    foreach (var entry in copy)
+                    {
+                        if (validation.FailedProperties.TryGetValue(entry.PropertyName, out var outcome))
+                        {
+                            ApplyOutcome(entry, outcome);
+                        }
+                    }
+                }
+                properties = copy;
+            }
+
             return new WireEvent
             {
                 ApiKey = _apiKey,
@@ -576,10 +736,217 @@ namespace Avo.Inspector
                 SamplingRate = samplingSnapshot,
                 Type = "event",
                 EventName = eventName ?? string.Empty,
-                EventProperties = eventSchema,
+                EventProperties = properties,
                 OutputReference = outputReference,
-                OriginHint = originHint
+                OriginHint = originHint,
+                EventSpecMetadata = validation?.Metadata,
+                PublicEncryptionKey = _publicEncryptionKey
             };
+        }
+
+        // ----- event spec validation and value encryption (AVO-4069) ----------------------------
+
+        /// <summary>
+        /// Fetches the event's spec (cached per stream id, event name and gateway coordinates) and
+        /// validates the values against it. Returns <c>null</c> — send without validation — when
+        /// there is no spec, the fetch fails or times out, or anything else goes wrong. Never throws.
+        /// </summary>
+        private async Task<EventValidationResult?> ValidateAsync(
+            string eventName,
+            string streamId,
+            IReadOnlyList<SchemaEntry> eventSchema,
+            IDictionary<string, object?>? eventProperties,
+            string? rawOutputReference,
+            string? rawOriginHint)
+        {
+            try
+            {
+                var baseUrl = ResolveSpecBaseUrl();
+                if (baseUrl == null)
+                {
+                    return null;
+                }
+                // The same normalized coordinates as on the track body: a gateway key answers the
+                // spec of that checkpoint (originHint: gateway input; with outputReference: that
+                // output), and each checkpoint's spec has its own cache entry and fetch.
+                var originHint = NormalizeHint(rawOriginHint);
+                var outputReference = NormalizeHint(rawOutputReference);
+                var name = eventName ?? string.Empty;
+                var key = EventSpecCache.MakeKey(streamId, name, originHint, outputReference);
+
+                if (!_specCache!.TryGet(key, out var spec))
+                {
+                    if (Interlocked.Increment(ref _waitingValidations) > MaxWaitingValidations)
+                    {
+                        Interlocked.Decrement(ref _waitingValidations);
+                        Logger.Error(_shouldLog, MaxWaitingValidations + " events are already waiting for an event spec; sending \"" + name + "\" without validation.");
+                        return null;
+                    }
+                    FetchResult fetched;
+                    try
+                    {
+                        fetched = await _specFetcher!
+                            .FetchAsync(key, baseUrl, name, streamId, originHint, outputReference, _shouldLog, _cts.Token)
+                            .ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        Interlocked.Decrement(ref _waitingValidations);
+                    }
+                    switch (fetched.Outcome)
+                    {
+                        case FetchOutcome.Ok:
+                            _specCache.Set(key, fetched.Spec, EventSpecCache.SpecTtl);
+                            break;
+                        case FetchOutcome.NotFound:
+                            // No spec for these keys (such as a gateway key without originHint).
+                            _specCache.Set(key, null, EventSpecCache.SpecTtl);
+                            break;
+                        case FetchOutcome.Failed:
+                            // Cached briefly, so a failing endpoint is not hit for every event but a
+                            // blip skips validation only for a few seconds.
+                            _specCache.Set(key, null, EventSpecCache.TransientFailureTtl);
+                            break;
+                    }
+                    spec = fetched.Spec;
+                }
+
+                if (spec == null || spec.Events.Count == 0)
+                {
+                    return null;
+                }
+                var failed = EventValidator.Validate(spec, eventSchema, eventProperties, _shouldLog);
+                Logger.Error(_shouldLog, "Validated \"" + name + "\" against its event spec: " + failed.Count + " propert" + (failed.Count == 1 ? "y" : "ies") + " failed.");
+                return new EventValidationResult(spec.Metadata, failed);
+            }
+            catch (Exception ex)
+            {
+                // Only the error's type: validation reads property values, which can end up in it.
+                Logger.Error(_shouldLog, "event spec validation failed (" + ex.GetType().Name + "); sending without validation.");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Where event spec fetches go: <c>https://api.avo.app</c>, or the scheme and authority of
+        /// <c>AVO_INSPECTOR_MOCK_ENDPOINT</c> when it is set (validation runs only outside prod, so
+        /// the mock gate of <see cref="ResolveEndpoint"/> always allows it). <c>null</c>, and no
+        /// validation, when the override is not an absolute http(s) URL.
+        /// </summary>
+        private static string? ResolveSpecBaseUrl()
+        {
+            var overrideUrl = Environment.GetEnvironmentVariable(MockEndpointEnvVar);
+            if (string.IsNullOrEmpty(overrideUrl))
+            {
+                return ProductionSpecBaseUrl;
+            }
+            if (Uri.TryCreate(overrideUrl, UriKind.Absolute, out var uri)
+                && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+            {
+                return uri.GetLeftPart(UriPartial.Authority);
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Encrypts each property's value into <see cref="SchemaEntry.EncryptedPropertyValue"/>, as
+        /// the Node SDK does: the value's JSON (an object's as a whole), one per top-level property.
+        /// A list's value is not sent. A value that cannot be serialized or encrypted is not sent
+        /// either; the property itself always stays in the schema.
+        /// </summary>
+        private void EncryptValues(List<SchemaEntry> properties, IDictionary<string, object?> eventProperties)
+        {
+            foreach (var entry in properties)
+            {
+                if (entry.PropertyType.StartsWith("list(", StringComparison.Ordinal)
+                    || !eventProperties.TryGetValue(entry.PropertyName, out var value))
+                {
+                    continue;
+                }
+                try
+                {
+                    entry.EncryptedPropertyValue = _encryptor!.Encrypt(RawValues.ToJson(value));
+                }
+                catch (Exception ex)
+                {
+                    // Names the property and the error type only, never the value.
+                    Logger.Error(_shouldLog, "could not encrypt the value of \"" + entry.PropertyName + "\" (" + ex.GetType().Name + "); sending it without its value.");
+                }
+            }
+        }
+
+        // A property's failed event IDs, and those of its object properties on its children. A list's
+        // children are its element schemas; each object element gets the outcomes of the properties
+        // it has (a list of objects is validated across all its items).
+        private static void ApplyOutcome(SchemaEntry entry, PropertyValidationOutcome outcome)
+        {
+            if (outcome.FailedEventIds.Count > 0)
+            {
+                entry.FailedEventIds = new List<string>(outcome.FailedEventIds);
+            }
+            if (outcome.Children != null && entry.Children != null)
+            {
+                ApplyChildOutcomes(entry.Children, outcome.Children);
+            }
+        }
+
+        private static void ApplyChildOutcomes(object? children, Dictionary<string, PropertyValidationOutcome> outcomes)
+        {
+            switch (children)
+            {
+                case SchemaEntry child:
+                    if (outcomes.TryGetValue(child.PropertyName, out var outcome))
+                    {
+                        ApplyOutcome(child, outcome);
+                    }
+                    return;
+                case string _:
+                    return;
+                case System.Collections.IEnumerable list:
+                    foreach (var item in list)
+                    {
+                        ApplyChildOutcomes(item, outcomes);
+                    }
+                    return;
+            }
+        }
+
+        private static List<SchemaEntry> CloneSchema(IReadOnlyList<SchemaEntry> schema)
+        {
+            var copy = new List<SchemaEntry>(schema.Count);
+            foreach (var entry in schema)
+            {
+                copy.Add(CloneEntry(entry));
+            }
+            return copy;
+        }
+
+        private static SchemaEntry CloneEntry(SchemaEntry entry)
+            => new SchemaEntry(entry.PropertyName, entry.PropertyType, CloneChildren(entry.Children));
+
+        // Children are a type string, an entry, or a (nested) list of those (see SchemaEntry).
+        private static object? CloneChildren(object? children)
+        {
+            switch (children)
+            {
+                case null:
+                    return null;
+                case string s:
+                    return s;
+                case SchemaEntry entry:
+                    return CloneEntry(entry);
+                case List<SchemaEntry> entries:
+                    return entries.ConvertAll(CloneEntry);
+                case System.Collections.IEnumerable list:
+                    var items = new List<object?>();
+                    foreach (var item in list)
+                    {
+                        items.Add(CloneChildren(item));
+                    }
+                    return items;
+                default:
+                    return children;
+            }
         }
 
         private void OnScheduledFlush(object? state)
@@ -713,5 +1080,9 @@ namespace Avo.Inspector
         internal string ResolvedEndpointForTesting() => ResolveEndpoint();
 
         internal static bool ShouldLogForTesting => _shouldLog;
+
+        internal bool IsValidationActiveForTesting => _specFetcher != null;
+
+        internal bool IsEncryptionActiveForTesting => _encryptor != null;
     }
 }

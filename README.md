@@ -14,6 +14,9 @@ storage. All state is in memory.
   wire-protocol, error-handling, batching) — see [Conformance](#conformance).
 - ✅ Thread-safe; safe for concurrent use on multi-threaded servers.
 - ✅ Batching with size + time/idle flush triggers, bounded queue, and gzip.
+- ✅ In `dev` and `staging`: property values are checked against your tracking plan
+  (allowed values, pinned values, regex, min/max), and can be sent encrypted so the
+  Inspector Debugger shows them — see [Value checks](#value-checks-dev-and-staging).
 - ✅ Multi-targets `netstandard2.0` and `net8.0` (works on .NET Framework 4.6.2+,
   .NET Core, .NET 5–8, Mono, Unity). The `4.6.2` floor on .NET Framework is imposed by
   the `System.Text.Json` 8.0.x dependency.
@@ -171,6 +174,73 @@ stores a `null` `appVersion` as `"unversioned"`. The SDK logs nothing about it.
 
 ---
 
+## Value checks (dev and staging)
+
+In `Dev` and `Staging`, the SDK checks each event's property **values** against the event
+in your tracking plan, as the web, Node and mobile SDKs do. Before sending an event it
+fetches the event's spec from Avo (`GET https://api.avo.app/trackingPlan/eventSpec`), then
+checks every value constraint the spec sets:
+
+- **allowed values** — the value must be one of the property's allowed values;
+- **pinned values** — the value must equal the pinned value;
+- **regex** — a string value must match the pattern;
+- **min/max** — a number must be within the range (either bound may be open).
+
+Constraints are checked on each property and on the properties of an object, or of each
+object in a list (one level deep). Each constraint belongs to the tracking-plan event or
+variant that sets it, so a value can fail for one variant and pass for another. Failures
+show up as value issues in the Inspector Debugger. Types are not checked here: Avo
+compares the reported schema with the tracking plan for that.
+
+```csharp
+var inspector = new AvoInspector(new AvoInspectorOptions
+{
+    ApiKey  = "my-inspector-api-key",
+    Env     = AvoInspectorEnv.Staging,
+    Version = "1.4.2",
+    // Optional: lets the Debugger show the values themselves (see below).
+    PublicEncryptionKey = "04a1b2…",
+});
+
+// "Enterprise" is not one of the plan's allowed values: the Debugger shows a value issue.
+await inspector.TrackSchemaFromEvent("Plan Upgraded",
+    new Dictionary<string, object?> { ["plan"] = "Enterprise" });
+```
+
+**Gateways.** With `originHint` (and `outputReference`), the spec fetch carries them too, so
+a gateway key is checked against the event as expected at that checkpoint: the gateway
+input with `originHint` alone, or that output with both. Each checkpoint's spec is cached
+on its own. A gateway key has no spec without `originHint`; such events are sent without
+value checks.
+
+**It never blocks or drops an event.** A spec is cached for 60 seconds (or 50 events) per
+event name, stream id and checkpoint, and concurrent tracks of the same event share one
+fetch. If the fetch fails, times out (10 seconds), or Avo has no spec for the event, the
+event is sent without value checks, as before; a failed fetch is retried after 5 seconds
+(60 for a 404). The first track of an event therefore waits for its spec fetch;
+`Flush()` waits for tracks still waiting on a spec, within its timeout. Checks are bounded:
+a list of more than 1,000 items, or a string of more than 10,000 characters against a
+regex, is not checked, and each regex match has a 100 ms budget.
+
+**`Prod` is unchanged:** no spec fetch, no value checks, no values sent.
+
+### Showing values in the Debugger: `PublicEncryptionKey`
+
+Without `PublicEncryptionKey`, no property values ever leave your service — only names,
+types and which checks failed. With it, in `Dev` and `Staging`, each property's value is
+encrypted with that key (ECIES on P-256 with AES-256-GCM, the same format as the web and
+Node SDKs) and sent as `encryptedPropertyValue`; only the holder of the matching private
+key, in the Inspector Debugger, can read it. An object's value is encrypted as its JSON; a
+list's value is not sent. Copy the public key from your Avo workspace (66 or 130 hex
+characters). A key that cannot be used is reported once on stderr at construction, and
+events are then sent without values.
+
+Encryption needs **.NET 8 or later** (the SDK's `net8.0` build): `netstandard2.0` has no
+elliptic-curve Diffie-Hellman. On .NET Framework or .NET 6/7 the key is ignored with a
+warning at construction; value checks still run.
+
+---
+
 ## ⚠️ Shutdown contract — you MUST flush before exit
 
 Buffered and in-flight events are held **in memory only** and are delivered
@@ -219,6 +289,7 @@ may be suspended between invocations or leak across warm-container reuse.
 | `BatchFlushSeconds` | double | no | `30` | Max age of the oldest buffered event before a scheduled flush. |
 | `MaxQueueSize` | int | no | `1000` | Hard cap; oldest events dropped first (FIFO) on overflow. |
 | `DisableBatchTimer` | bool | no | `false` | Disable the background scheduled-flush timer. |
+| `PublicEncryptionKey` | string | no | — | Hex P-256 public key. In `Dev`/`Staging`, values are sent encrypted for the Inspector Debugger. Options constructor only. See [Value checks](#value-checks-dev-and-staging). |
 
 The constructor throws synchronously (an `ArgumentException`) for a missing/whitespace
 `ApiKey` or `Version`. An invalid or absent `env` string **never throws** — it falls
@@ -364,6 +435,14 @@ a `Prod` instance ignores it unconditionally, so production traffic can never be
 > omitted entirely when not provided, so a call that supplies none of the three coordinates
 > produces a body with exactly the 1.0.0 key set and values — only `libVersion` differs. See
 > [Gateways](#gateways).
+>
+> **Value checks (since 1.2.0, `dev` and `staging` only).** A validated event carries
+> `eventSpecMetadata` (`schemaId`, `branchId`, `latestActionId`, `sourceId`), and each property
+> that failed a value check carries `failedEventIds` (on the property, or on its children
+> for an object or list of objects). With `PublicEncryptionKey`, the body carries
+> `publicEncryptionKey` and properties carry `encryptedPropertyValue`. None of these keys is
+> sent without a spec or a key, so the body is then exactly the 1.1.x one. See
+> [Value checks](#value-checks-dev-and-staging).
 
 ---
 

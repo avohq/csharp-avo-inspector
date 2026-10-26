@@ -16,6 +16,11 @@ namespace Avo.Inspector.Tests
     /// Records request bodies (gunzipping when <c>Content-Encoding: gzip</c>) and headers, and
     /// returns a configurable status/body. Set the SDK's endpoint to <see cref="BaseUrl"/> via
     /// <c>AVO_INSPECTOR_MOCK_ENDPOINT</c>.
+    /// <para>Event spec fetches (<c>GET /trackingPlan/eventSpec</c>, dev and staging only) are
+    /// answered separately and recorded in <see cref="SpecRequests"/>, never in
+    /// <see cref="Requests"/>: by default with a 404, which the SDK treats as "no spec" and sends the
+    /// event without validation, as the conformance mock server does. Configure a spec with
+    /// <see cref="ConfigureSpec"/>.</para>
     /// </summary>
     internal sealed class TestInspectorServer : IDisposable
     {
@@ -25,6 +30,10 @@ namespace Avo.Inspector.Tests
         private int _status = 200;
         private string _body = "{\"samplingRate\":1.0}";
         private volatile bool _running;
+        private readonly List<string> _specRequests = new List<string>();
+        private int _specStatus = 404;
+        private string _specBody = string.Empty;
+        private int _specDelayMs;
 
         public TestInspectorServer()
         {
@@ -63,6 +72,23 @@ namespace Avo.Inspector.Tests
             get { lock (_gate) { return _requests.ToArray(); } }
         }
 
+        /// <summary>Path and query of each event spec fetch, in arrival order.</summary>
+        public IReadOnlyList<string> SpecRequests
+        {
+            get { lock (_gate) { return _specRequests.ToArray(); } }
+        }
+
+        /// <summary>Answers event spec fetches with this status and body, after <paramref name="delayMs"/>.</summary>
+        public void ConfigureSpec(int status, string body, int delayMs = 0)
+        {
+            lock (_gate)
+            {
+                _specStatus = status;
+                _specBody = body;
+                _specDelayMs = delayMs;
+            }
+        }
+
         public void Configure(int status, string body)
         {
             lock (_gate)
@@ -84,6 +110,14 @@ namespace Avo.Inspector.Tests
                 catch
                 {
                     return; // listener stopped
+                }
+
+                if (context.Request.HttpMethod == "GET"
+                    && context.Request.Url != null
+                    && context.Request.Url.AbsolutePath == "/trackingPlan/eventSpec")
+                {
+                    _ = Task.Run(() => AnswerSpec(context));
+                    continue;
                 }
 
                 try
@@ -112,6 +146,38 @@ namespace Avo.Inspector.Tests
                     try { context.Response.Abort(); }
                     catch { /* ignore per-request errors in the test mock */ }
                 }
+            }
+        }
+
+        private async Task AnswerSpec(HttpListenerContext context)
+        {
+            try
+            {
+                int status;
+                string body;
+                int delayMs;
+                lock (_gate)
+                {
+                    _specRequests.Add(context.Request.Url!.PathAndQuery);
+                    status = _specStatus;
+                    body = _specBody;
+                    delayMs = _specDelayMs;
+                }
+                if (delayMs > 0)
+                {
+                    await Task.Delay(delayMs).ConfigureAwait(false);
+                }
+                var payload = Encoding.UTF8.GetBytes(body);
+                context.Response.StatusCode = status;
+                context.Response.ContentType = "application/json";
+                context.Response.ContentLength64 = payload.Length;
+                context.Response.OutputStream.Write(payload, 0, payload.Length);
+                context.Response.OutputStream.Close();
+            }
+            catch
+            {
+                try { context.Response.Abort(); }
+                catch { /* ignore per-request errors in the test mock */ }
             }
         }
 

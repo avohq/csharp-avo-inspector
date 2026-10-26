@@ -21,6 +21,7 @@ public sealed class AvoInspectorOptions
     public double? BatchFlushSeconds { get; set; } // OPTIONAL, default 30; MUST be > 0
     public int? MaxQueueSize { get; set; }         // OPTIONAL, default 1000
     public bool? DisableBatchTimer { get; set; }   // OPTIONAL, default false
+    public string? PublicEncryptionKey { get; set; } // OPTIONAL; hex P-256 public key; wire: publicEncryptionKey
 }
 ```
 
@@ -31,5 +32,8 @@ public sealed class AvoInspectorOptions
 - `BatchSize` is forced to `1` when `Env == Dev`. Out-of-range numeric options fall back to their
   defaults with a warning (enforced by `AvoInspector`, SPEC.md §12.2).
 - Serverless deployments SHOULD set `DisableBatchTimer = true` (SPEC.md §11.2).
+- `PublicEncryptionKey` (AVO-4069, an extension beyond the spec): in `Dev`/`Staging`, property
+  values are sent encrypted with it as `encryptedPropertyValue`; never used for encryption in
+  `Prod`; needs .NET 8 or later. Only on the options constructor.
 - Default property values: `ApiKey`/`Version` default to `""`, `Env` defaults to `Dev`; nullable
   options default to `null` (meaning "use the SDK default").

@@ -90,3 +90,7 @@ extracts to:
   ]}
 ]
 -->
+
+`IsObjectMap(object?)` and `EnumerateMap(object)` are `internal` (not `private`) so that
+`RawValues` classifies maps exactly as the parser does when it reads raw values for event spec
+validation and value encryption.

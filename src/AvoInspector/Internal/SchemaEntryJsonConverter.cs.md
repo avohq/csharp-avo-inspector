@@ -15,13 +15,17 @@ C# / .NET, `System.Text.Json` (`Utf8JsonWriter`).
 
 ## Functional requirements
 
-- `Write` emits an object: `{ "propertyName": <string>, "propertyType": <string> }`, then a
-  `"children"` member **only when** `SchemaEntry.Children` is non-`null` (a `null` `Children` is
-  omitted entirely — not written as JSON `null`).
+- `Write` emits an object: `{ "propertyName": <string>, "propertyType": <string> }`, then
+  `"encryptedPropertyValue"` only when the internal `SchemaEntry.EncryptedPropertyValue` is
+  non-`null`, then a `"children"` member **only when** `SchemaEntry.Children` is non-`null` (a `null`
+  `Children` is omitted entirely — not written as JSON `null`), then `"failedEventIds"` (array of
+  strings) only when the internal `SchemaEntry.FailedEventIds` is non-`null`. The two wire-only keys
+  are set only on the copy of the schema sent in dev and staging, so a plain schema serializes
+  exactly as in 1.1.x.
 - The `children` value is written recursively as a union member, by runtime type:
   - `null` → JSON null
   - `string` → JSON string
-  - `SchemaEntry` → nested object (same `propertyName`/`propertyType`/`children?` shape)
+  - `SchemaEntry` → nested object (same shape, wire-only keys included)
   - `IEnumerable` → JSON array, each element recursively written.
 - **IMPORTANT:** a `string` is checked before the generic `IEnumerable` branch (a string is an
   `IEnumerable<char>`); otherwise type strings would serialize as char arrays.
