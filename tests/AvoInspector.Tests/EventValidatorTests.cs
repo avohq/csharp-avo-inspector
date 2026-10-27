@@ -116,6 +116,54 @@ namespace Avo.Inspector.Tests
             Assert.NotNull(Failed(spec, Props.Of(("a", new string('y', 10_000))), "a"));
         }
 
+        [Fact]
+        public void Regex_with_catastrophic_backtracking_is_checked_in_linear_time()
+        {
+            // On a backtracking engine this pattern needs exponential time on "aaa…a!" and would run
+            // out of its budget and be skipped; the linear-time engine fails the value straight away.
+            var spec = Spec("{\"a\":{\"t\":\"string\",\"rx\":{\"^(a+)+$\":[\"evt\"]}}}");
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            Assert.Equal(new[] { "evt" }, Failed(spec, Props.Of(("a", new string('a', 5_000) + "!")), "a"));
+            Assert.True(watch.ElapsedMilliseconds < 1_000, "took " + watch.ElapsedMilliseconds + " ms");
+            Assert.Null(Failed(spec, Props.Of(("a", new string('a', 5_000))), "a"));
+        }
+
+        [Fact]
+        public void Regex_the_linear_engine_cannot_take_still_runs_on_the_backtracking_engine()
+        {
+            var spec = Spec(
+                "{\"look\":{\"t\":\"string\",\"rx\":{\"^(?=.*[0-9])[a-z0-9]+$\":[\"evt\"]}},"
+                + "\"back\":{\"t\":\"string\",\"rx\":{\"^(a)\\\\1$\":[\"evt\"]}},"
+                + "\"word\":{\"t\":\"string\",\"rx\":{\"\\\\bcat\\\\b\":[\"evt\"]}}}");
+            Assert.Null(Failed(spec, Props.Of(("look", "abc1"), ("back", "aa"), ("word", "a cat sat")), "look"));
+            Assert.Equal(new[] { "evt" }, Failed(spec, Props.Of(("look", "abc")), "look"));
+            Assert.Null(Failed(spec, Props.Of(("back", "aa")), "back"));
+            Assert.Equal(new[] { "evt" }, Failed(spec, Props.Of(("back", "ab")), "back"));
+            Assert.Null(Failed(spec, Props.Of(("word", "a cat sat")), "word"));
+            Assert.Equal(new[] { "evt" }, Failed(spec, Props.Of(("word", "concatenate")), "word"));
+        }
+
+        [Theory]
+        [InlineData(@"^\d+$", "^[0-9]+$")]
+        [InlineData(@"^[\d.]+$", "^[0-9.]+$")]
+        [InlineData(@"\w\W\D", "[a-zA-Z0-9_][^a-zA-Z0-9_][^0-9]")]
+        [InlineData(@"[\w-]", "[a-zA-Z0-9_-]")]
+        [InlineData(@"\\d", @"\\d")]           // an escaped backslash, then a literal d
+        [InlineData(@"[\b]", @"[\b]")]           // backspace inside a class
+        [InlineData(@"^\s\.\u0041$", @"^\s\.\u0041$")]
+        [InlineData(@"[\D]", null)]
+        [InlineData(@"[^\W]", null)]
+        [InlineData(@"\bword", null)]
+        [InlineData(@"a\B", null)]
+        [InlineData("[]a", null)]
+        [InlineData("[^]a", null)]
+        [InlineData("[a-z-[aeiou]]", null)]
+        [InlineData(@"trailing\", null)]
+        public void Linear_pattern_keeps_JavaScript_classes_or_declines(string pattern, string? expected)
+        {
+            Assert.Equal(expected, EventValidator.ToLinearPattern(pattern));
+        }
+
         // ----- min/max ---------------------------------------------------------------------------
 
         [Theory]

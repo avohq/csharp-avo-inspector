@@ -36,6 +36,12 @@ fetch, no value checks, no values sent.
   60 s and any other failure for 5 s; concurrent tracks of one event share one fetch; at most
   1,000 events wait for a spec at once, across instances. `Flush()` first waits, within its
   timeout, for tracks still waiting on a spec, and `Destroy()` abandons spec fetches.
+- **A tracking-plan regex cannot hang a track.** On .NET 7 and later, patterns run on the
+  linear-time `RegexOptions.NonBacktracking` engine, as Go (RE2) and Java (RE2J) do, with
+  `\d` and `\w` rewritten to JavaScript's ASCII classes. Patterns that engine cannot run
+  (lookarounds, backreferences, `\b`), and every pattern on older runtimes, use the
+  backtracking engine with JavaScript semantics. Every match has a 100 ms budget, and a pattern
+  that runs out is skipped from then on.
 - **Native AOT and trimming.** The spec response is read with `JsonDocument` and values are
   written with `Utf8JsonWriter`, so neither needs reflection; `eventSpecMetadata` goes through
   the source-generated context. No new package dependency.

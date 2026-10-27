@@ -19,8 +19,9 @@ namespace Avo.Inspector.Internal.EventSpec
     /// the schema's. <c>required</c> only decides whether a <c>null</c> or missing value is checked
     /// against the constraints.</para>
     /// <para>Validation runs on the track path, so it is bounded: a list of more than 1,000 items is
-    /// not checked, a string longer than 10,000 characters is not checked against regex patterns, and
-    /// each regex match has a 100 ms budget (a pattern that runs out is skipped from then on). Logs carry spec
+    /// not checked, a string longer than 10,000 characters is not checked against regex patterns, regex
+    /// patterns run on .NET's linear-time engine where it can take them, and each regex match has a
+    /// 100 ms budget (a pattern that runs out is skipped from then on). Logs carry spec
     /// strings and counts, never property values.</para>
     /// </remarks>
     internal static class EventValidator
@@ -433,10 +434,16 @@ namespace Avo.Inspector.Internal.EventSpec
         }
 
         /// <summary>
-        /// Compiles a tracking-plan pattern. Patterns are written for JavaScript, so ECMAScript
-        /// semantics are tried first (ASCII <c>\d</c> and <c>\w</c>, as in JavaScript); a pattern that
-        /// option rejects is compiled with the default .NET syntax instead. Every match has a timeout,
-        /// which stands in for the Node SDK's static unsafe-pattern check.
+        /// Compiles a tracking-plan pattern. On .NET 7 and later a pattern is compiled first with
+        /// <see cref="RegexOptions"/><c>.NonBacktracking</c>, whose matching time is linear in the
+        /// input, so no pattern can backtrack catastrophically (the guarantee Go's RE2 and Java's
+        /// RE2J give). That engine cannot take <c>RegexOptions.ECMAScript</c>, so
+        /// <see cref="ToLinearPattern"/> first rewrites <c>\d</c> and <c>\w</c> to JavaScript's
+        /// ASCII classes. A pattern it cannot take (lookarounds, backreferences, <c>\b</c>) and every
+        /// pattern on older runtimes use the backtracking engine: ECMAScript semantics first, the
+        /// default .NET syntax when that option rejects the pattern. Every match has a timeout either
+        /// way, which on the backtracking engine stands in for the Node SDK's static unsafe-pattern
+        /// check.
         /// </summary>
         private static Regex? CompileRegex(string pattern, bool shouldLog)
         {
@@ -447,24 +454,130 @@ namespace Avo.Inspector.Internal.EventSpec
                     return cached;
                 }
             }
-            Regex? regex = null;
+            var regex = CompileLinear(pattern) ?? CompileBacktracking(pattern, shouldLog);
+            CacheConstraint(RegexCache, pattern, regex);
+            return regex;
+        }
+
+        private static Regex? CompileLinear(string pattern)
+        {
+#if NET7_0_OR_GREATER
+            var linear = ToLinearPattern(pattern);
+            if (linear == null)
+            {
+                return null;
+            }
             try
             {
-                regex = new Regex(pattern, RegexOptions.ECMAScript, RegexMatchTimeout);
+                return new Regex(linear, RegexOptions.NonBacktracking | RegexOptions.CultureInvariant, RegexMatchTimeout);
+            }
+            catch (ArgumentException)
+            {
+                return null;
+            }
+            catch (NotSupportedException)
+            {
+                return null;
+            }
+#else
+            return null;
+#endif
+        }
+
+        private static Regex? CompileBacktracking(string pattern, bool shouldLog)
+        {
+            try
+            {
+                return new Regex(pattern, RegexOptions.ECMAScript, RegexMatchTimeout);
             }
             catch (ArgumentException)
             {
                 try
                 {
-                    regex = new Regex(pattern, RegexOptions.CultureInvariant, RegexMatchTimeout);
+                    return new Regex(pattern, RegexOptions.CultureInvariant, RegexMatchTimeout);
                 }
                 catch (ArgumentException)
                 {
                     Logger.Error(shouldLog, "Invalid regex pattern skipped: " + pattern);
+                    return null;
                 }
             }
-            CacheConstraint(RegexCache, pattern, regex);
-            return regex;
+        }
+
+        /// <summary>
+        /// Rewrites a JavaScript pattern for the default .NET syntax so that <c>\d</c>, <c>\D</c>,
+        /// <c>\w</c> and <c>\W</c> keep JavaScript's ASCII meaning (.NET's match any Unicode digit
+        /// or letter). Returns <c>null</c> for a pattern whose meaning the rewrite cannot keep:
+        /// <c>\D</c> or <c>\W</c> inside a character class, <c>\b</c> or <c>\B</c> (word boundaries
+        /// use .NET's Unicode word characters), an empty class (<c>[]</c>, <c>[^]</c>) or <c>-[</c>
+        /// inside a class, which .NET parses differently. Such a pattern goes to the backtracking
+        /// engine instead.
+        /// </summary>
+        internal static string? ToLinearPattern(string pattern)
+        {
+            var result = new System.Text.StringBuilder(pattern.Length + 16);
+            var inClass = false;
+            for (var i = 0; i < pattern.Length; i++)
+            {
+                var c = pattern[i];
+                if (c == '\\')
+                {
+                    if (i + 1 >= pattern.Length)
+                    {
+                        return null;
+                    }
+                    var next = pattern[++i];
+                    switch (next)
+                    {
+                        case 'd':
+                            result.Append(inClass ? "0-9" : "[0-9]");
+                            break;
+                        case 'w':
+                            result.Append(inClass ? "a-zA-Z0-9_" : "[a-zA-Z0-9_]");
+                            break;
+                        case 'D':
+                        case 'W':
+                            if (inClass)
+                            {
+                                return null;
+                            }
+                            result.Append(next == 'D' ? "[^0-9]" : "[^a-zA-Z0-9_]");
+                            break;
+                        case 'b':
+                        case 'B':
+                            if (!inClass)
+                            {
+                                return null;
+                            }
+                            result.Append('\\').Append(next);
+                            break;
+                        default:
+                            result.Append('\\').Append(next);
+                            break;
+                    }
+                    continue;
+                }
+                if (!inClass && c == '[')
+                {
+                    var close = i + 1 < pattern.Length && pattern[i + 1] == '^' ? i + 2 : i + 1;
+                    if (close < pattern.Length && pattern[close] == ']')
+                    {
+                        return null;
+                    }
+                    inClass = true;
+                }
+                else if (inClass && c == ']')
+                {
+                    inClass = false;
+                }
+                else if (inClass && c == '[' && pattern[i - 1] == '-')
+                {
+                    // "-[" inside a class is .NET's class subtraction; in JavaScript it is literal.
+                    return null;
+                }
+                result.Append(c);
+            }
+            return result.ToString();
         }
 
         private static void CacheConstraint<T>(Dictionary<string, T> cache, string key, T value)
