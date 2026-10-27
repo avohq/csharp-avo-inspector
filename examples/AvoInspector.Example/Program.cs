@@ -166,6 +166,13 @@ namespace Avo.Inspector.Example
                 return 1;
             }
 
+            // Without --event the sample events go out, so these options would be silently ignored.
+            if (eventName == null && (props ?? streamId ?? originHint ?? outputReference) != null)
+            {
+                Console.Error.WriteLine("error: --props, --stream-id, --origin-hint and --output-reference need --event.");
+                return 1;
+            }
+
             // --live targets the real API. The SDK honors AVO_INSPECTOR_MOCK_ENDPOINT for any
             // non-prod env, so a leftover override (e.g. from a prior dry run) would silently
             // redirect us away from Avo. Clear it for this process so --live really goes live.
