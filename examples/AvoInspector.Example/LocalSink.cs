@@ -64,6 +64,15 @@ namespace Avo.Inspector.Example
 
                 try
                 {
+                    // In dev and staging the SDK first fetches the event spec with a GET. The sink
+                    // has no tracking plan, so it answers 404 and the events go out unvalidated.
+                    if (context.Request.HttpMethod == "GET")
+                    {
+                        context.Response.StatusCode = 404;
+                        context.Response.Close();
+                        continue;
+                    }
+
                     var captured = Read(context.Request);
                     lock (_gate) { _captured.Add(captured); }
 

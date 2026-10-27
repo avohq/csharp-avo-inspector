@@ -13,7 +13,11 @@ namespace Avo.Inspector.Example
     ///   dotnet run                # dry-run: shows schema extraction + the exact wire payloads,
     ///                             # offline, against a local loopback sink (no credentials needed)
     ///   dotnet run -- --live      # sends to the real Avo Inspector API
-    ///                             #   env:   AVO_INSPECTOR_API_KEY (required), AVO_INSPECTOR_ENV (default dev)
+    ///                             #   env:   AVO_INSPECTOR_API_KEY (required), AVO_INSPECTOR_ENV (default dev),
+    ///                             #          AVO_INSPECTOR_PUBLIC_ENCRYPTION_KEY (optional)
+    ///   dotnet run -- --live --event "Name" --props '{"plan":"Pro"}' [--stream-id ID]
+    ///                             [--origin-hint HINT] [--output-reference REF]
+    ///                             # sends one event of your own, e.g. to check values against a tracking plan
     ///   dotnet run -- --help
     /// </summary>
     internal static class Program
@@ -40,7 +44,7 @@ namespace Avo.Inspector.Example
 
             if (live)
             {
-                return await RunLiveAsync();
+                return await RunLiveAsync(args);
             }
 
             await RunDryRunAsync();
@@ -126,7 +130,7 @@ namespace Avo.Inspector.Example
 
         // ----- 2b. Live: send to the real Avo Inspector API -------------------------------------
 
-        private static async Task<int> RunLiveAsync()
+        private static async Task<int> RunLiveAsync(string[] args)
         {
             Header("2. Track + flush — LIVE against the Avo Inspector API");
 
@@ -151,7 +155,43 @@ namespace Avo.Inspector.Example
 
             Console.WriteLine($"Sending to env \"{env}\" as \"{InspectorVersion.LibPlatform}\" SDK v{InspectorVersion.LibVersion} ...");
 
-            var inspector = new AvoInspector(apiKey!, env, "1.4.2", appName: "checkout-service");
+            var encryptionKey = Environment.GetEnvironmentVariable("AVO_INSPECTOR_PUBLIC_ENCRYPTION_KEY");
+            var inspector = new AvoInspector(new AvoInspectorOptions
+            {
+                ApiKey = apiKey!,
+                Env = AvoInspectorEnvExtensions.TryParse(env, out var parsedEnv) ? parsedEnv : AvoInspectorEnv.Dev,
+                Version = "1.4.2",
+                AppName = "checkout-service",
+                PublicEncryptionKey = string.IsNullOrWhiteSpace(encryptionKey) ? null : encryptionKey,
+            });
+
+            var eventName = Option(args, "--event");
+            if (eventName != null)
+            {
+                IDictionary<string, object?> properties;
+                try
+                {
+                    properties = ParseProperties(Option(args, "--props") ?? "{}");
+                }
+                catch (JsonException ex)
+                {
+                    Console.Error.WriteLine("error: --props must be a JSON object: " + ex.Message);
+                    return 1;
+                }
+                var schema = await inspector.TrackSchemaFromEvent(
+                    eventName,
+                    properties,
+                    Option(args, "--stream-id") ?? "example",
+                    outputReference: Option(args, "--output-reference"),
+                    originHint: Option(args, "--origin-hint"),
+                    originAppVersion: null);
+                await inspector.Flush();
+
+                Console.WriteLine($"Tracked \"{eventName}\" and flushed. Schema:");
+                Console.WriteLine(Indent(JsonSerializer.Serialize(schema, Pretty)));
+                Console.WriteLine("In dev, the SDK logs its spec fetch and any value failures above.");
+                return 0;
+            }
 
             await inspector.TrackSchemaFromEvent("User Signed Up",
                 Dict(("plan", "pro"), ("seats", 3), ("isTeam", true)), streamId: "web");
@@ -163,6 +203,49 @@ namespace Avo.Inspector.Example
             Console.WriteLine("Done. Tracked 2 events and flushed. (Network errors, if any, are swallowed");
             Console.WriteLine("by design — check the Avo Inspector dashboard to confirm receipt.)");
             return 0;
+        }
+
+        private static string? Option(string[] args, string name)
+        {
+            var index = Array.IndexOf(args, name);
+            return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
+        }
+
+        /// <summary>Turns a JSON object into the plain values the SDK takes (strings, numbers, bools, lists, maps).</summary>
+        private static IDictionary<string, object?> ParseProperties(string json)
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                throw new JsonException("expected an object");
+            }
+            return (IDictionary<string, object?>)ToValue(doc.RootElement)!;
+        }
+
+        private static object? ToValue(JsonElement element)
+        {
+            switch (element.ValueKind)
+            {
+                case JsonValueKind.Object:
+                    var map = new Dictionary<string, object?>();
+                    foreach (var property in element.EnumerateObject())
+                    {
+                        map[property.Name] = ToValue(property.Value);
+                    }
+                    return map;
+                case JsonValueKind.Array:
+                    return element.EnumerateArray().Select(ToValue).ToList();
+                case JsonValueKind.String:
+                    return element.GetString();
+                case JsonValueKind.Number:
+                    return element.TryGetInt64(out var integer) ? integer : (object)element.GetDouble();
+                case JsonValueKind.True:
+                    return true;
+                case JsonValueKind.False:
+                    return false;
+                default:
+                    return null;
+            }
         }
 
         // ----- sample data ----------------------------------------------------------------------
@@ -232,11 +315,16 @@ namespace Avo.Inspector.Example
             Console.WriteLine("Usage:");
             Console.WriteLine("  dotnet run                 Dry run: schema extraction + wire payloads (offline)");
             Console.WriteLine("  dotnet run -- --live       Send to the real Avo Inspector API");
+            Console.WriteLine("  dotnet run -- --live --event NAME --props JSON [--stream-id ID]");
+            Console.WriteLine("               [--origin-hint HINT] [--output-reference REF]");
+            Console.WriteLine("                             Send one event of your own and flush");
             Console.WriteLine("  dotnet run -- --help       Show this help");
             Console.WriteLine();
             Console.WriteLine("Environment (for --live):");
             Console.WriteLine("  AVO_INSPECTOR_API_KEY      Inspector API key (required)");
             Console.WriteLine("  AVO_INSPECTOR_ENV          dev | staging | prod (default: dev)");
+            Console.WriteLine("  AVO_INSPECTOR_PUBLIC_ENCRYPTION_KEY");
+            Console.WriteLine("                             Hex P-256 public key; values are sent encrypted (dev/staging)");
         }
     }
 }

@@ -98,7 +98,17 @@ dotnet run --project examples/AvoInspector.Example -- --live  # send to the real
 dotnet run --project examples/AvoInspector.Example -- --help
 ```
 
-For `--live`, set `AVO_INSPECTOR_API_KEY` (and optionally `AVO_INSPECTOR_ENV=dev|staging|prod`).
+For `--live`, set `AVO_INSPECTOR_API_KEY` (and optionally `AVO_INSPECTOR_ENV=dev|staging|prod`,
+and `AVO_INSPECTOR_PUBLIC_ENCRYPTION_KEY` to send values encrypted). To send one event of your
+own, for example to see value checks against your tracking plan in the Inspector Debugger:
+
+```sh
+dotnet run --project examples/AvoInspector.Example -- --live \
+  --event "Sign Up" --props '{"plan":"Enterprise","seats":0}' \
+  [--stream-id ID] [--origin-hint HINT] [--output-reference REF]
+```
+
+The example builds against this checkout, not the published package.
 
 ---
 
