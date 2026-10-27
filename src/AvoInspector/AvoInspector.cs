@@ -551,7 +551,9 @@ namespace Avo.Inspector
                     // SPEC.md §4.6 — flush() MUST resolve in all cases.
                 }
             }
-            var remainingMs = (int)Math.Max(0, timeoutMs - started.ElapsedMilliseconds);
+            var remainingMs = timeoutMs == Timeout.Infinite
+                ? Timeout.Infinite
+                : (int)Math.Max(0, timeoutMs - started.ElapsedMilliseconds);
 
             List<WireEvent>? batch = null;
             lock (_lock)

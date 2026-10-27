@@ -59,6 +59,25 @@ namespace Avo.Inspector.Tests
         }
 
         [Fact]
+        public async Task Flush_with_an_infinite_timeout_waits_for_the_send()
+        {
+            using var server = new TestInspectorServer();
+            server.Configure(200, "{\"samplingRate\":1.0}", delayMs: 500);
+            using (new MockEndpointScope(server.BaseUrl))
+            {
+                var inspector = new AvoInspector("k", "staging", "1.0.0", batchSize: 30, disableBatchTimer: true);
+                await inspector.TrackSchemaFromEvent("E", Props.Of(("a", 1)), "s1");
+
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                await inspector.Flush(System.Threading.Timeout.Infinite);
+
+                // Timeout.Infinite is a wait with no limit, not a zero budget.
+                Assert.True(watch.ElapsedMilliseconds >= 400, "returned after " + watch.ElapsedMilliseconds + " ms");
+                Assert.Equal(1, server.RequestCount);
+            }
+        }
+
+        [Fact]
         public async Task Transient_network_failure_drops_batch_without_requeue()
         {
             using var server = new TestInspectorServer();

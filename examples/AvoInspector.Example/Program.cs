@@ -142,7 +142,29 @@ namespace Avo.Inspector.Example
                 return 1;
             }
 
-            var env = Environment.GetEnvironmentVariable("AVO_INSPECTOR_ENV") ?? "dev";
+            var rawEnv = Environment.GetEnvironmentVariable("AVO_INSPECTOR_ENV") ?? "dev";
+            if (!AvoInspectorEnvExtensions.TryParse(rawEnv, out var env))
+            {
+                Console.Error.WriteLine($"warning: AVO_INSPECTOR_ENV \"{rawEnv}\" is not dev, staging or prod; using dev.");
+                env = AvoInspectorEnv.Dev;
+            }
+
+            // Values for the one-event mode. A flag with no value, or followed by another flag, is
+            // an error rather than an event named "--props".
+            string? eventName, props, streamId, originHint, outputReference;
+            try
+            {
+                eventName = Option(args, "--event");
+                props = Option(args, "--props");
+                streamId = Option(args, "--stream-id");
+                originHint = Option(args, "--origin-hint");
+                outputReference = Option(args, "--output-reference");
+            }
+            catch (ArgumentException ex)
+            {
+                Console.Error.WriteLine("error: " + ex.Message);
+                return 1;
+            }
 
             // --live targets the real API. The SDK honors AVO_INSPECTOR_MOCK_ENDPOINT for any
             // non-prod env, so a leftover override (e.g. from a prior dry run) would silently
@@ -153,25 +175,24 @@ namespace Avo.Inspector.Example
                 Environment.SetEnvironmentVariable("AVO_INSPECTOR_MOCK_ENDPOINT", null);
             }
 
-            Console.WriteLine($"Sending to env \"{env}\" as \"{InspectorVersion.LibPlatform}\" SDK v{InspectorVersion.LibVersion} ...");
+            Console.WriteLine($"Sending to env \"{env.ToWireString()}\" as \"{InspectorVersion.LibPlatform}\" SDK v{InspectorVersion.LibVersion} ...");
 
             var encryptionKey = Environment.GetEnvironmentVariable("AVO_INSPECTOR_PUBLIC_ENCRYPTION_KEY");
             var inspector = new AvoInspector(new AvoInspectorOptions
             {
                 ApiKey = apiKey!,
-                Env = AvoInspectorEnvExtensions.TryParse(env, out var parsedEnv) ? parsedEnv : AvoInspectorEnv.Dev,
+                Env = env,
                 Version = "1.4.2",
                 AppName = "checkout-service",
                 PublicEncryptionKey = string.IsNullOrWhiteSpace(encryptionKey) ? null : encryptionKey,
             });
 
-            var eventName = Option(args, "--event");
             if (eventName != null)
             {
                 IDictionary<string, object?> properties;
                 try
                 {
-                    properties = ParseProperties(Option(args, "--props") ?? "{}");
+                    properties = ParseProperties(props ?? "{}");
                 }
                 catch (JsonException ex)
                 {
@@ -181,9 +202,9 @@ namespace Avo.Inspector.Example
                 var schema = await inspector.TrackSchemaFromEvent(
                     eventName,
                     properties,
-                    Option(args, "--stream-id") ?? "example",
-                    outputReference: Option(args, "--output-reference"),
-                    originHint: Option(args, "--origin-hint"),
+                    streamId ?? "example",
+                    outputReference: outputReference,
+                    originHint: originHint,
                     originAppVersion: null);
                 await inspector.Flush();
 
@@ -205,10 +226,20 @@ namespace Avo.Inspector.Example
             return 0;
         }
 
+        /// <summary>The value after <paramref name="name"/>, or null when the flag is absent.</summary>
+        /// <exception cref="ArgumentException">The flag has no value, or another flag follows it.</exception>
         private static string? Option(string[] args, string name)
         {
             var index = Array.IndexOf(args, name);
-            return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
+            if (index < 0)
+            {
+                return null;
+            }
+            if (index + 1 >= args.Length || args[index + 1].StartsWith("--", StringComparison.Ordinal))
+            {
+                throw new ArgumentException(name + " needs a value.");
+            }
+            return args[index + 1];
         }
 
         /// <summary>Turns a JSON object into the plain values the SDK takes (strings, numbers, bools, lists, maps).</summary>

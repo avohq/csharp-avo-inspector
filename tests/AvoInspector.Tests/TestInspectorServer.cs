@@ -34,6 +34,7 @@ namespace Avo.Inspector.Tests
         private int _specStatus = 404;
         private string _specBody = string.Empty;
         private int _specDelayMs;
+        private int _delayMs;
 
         public TestInspectorServer()
         {
@@ -89,12 +90,14 @@ namespace Avo.Inspector.Tests
             }
         }
 
-        public void Configure(int status, string body)
+        /// <summary>Answers track requests with this status and body, after <paramref name="delayMs"/>.</summary>
+        public void Configure(int status, string body, int delayMs = 0)
         {
             lock (_gate)
             {
                 _status = status;
                 _body = body;
+                _delayMs = delayMs;
             }
         }
 
@@ -125,11 +128,17 @@ namespace Avo.Inspector.Tests
                     var record = ReadRequest(context.Request);
                     int status;
                     string body;
+                    int delayMs;
                     lock (_gate)
                     {
                         _requests.Add(record);
                         status = _status;
                         body = _body;
+                        delayMs = _delayMs;
+                    }
+                    if (delayMs > 0)
+                    {
+                        await Task.Delay(delayMs).ConfigureAwait(false);
                     }
 
                     var payload = Encoding.UTF8.GetBytes(body);
