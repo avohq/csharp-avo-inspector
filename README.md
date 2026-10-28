@@ -227,7 +227,9 @@ value checks.
 event name, stream id and checkpoint, and concurrent tracks of the same event share one
 fetch. If the fetch fails, times out (10 seconds), or Avo has no spec for the event, the
 event is sent without value checks, as before; a failed fetch is retried after 5 seconds
-(60 for a 404). The first track of an event therefore waits for its spec fetch.
+(60 for a 404). The first track of an event therefore waits for its spec fetch, unless 1,000
+events are already waiting for one across the process: then it is sent without value checks
+straight away.
 `Flush()` gives tracks still waiting on a spec up to 1 second (at most half its timeout) and
 then sends them without value checks, so a slow spec endpoint cannot hold up a flush before
 exit. Checks are bounded:
@@ -458,9 +460,10 @@ a `Prod` instance ignores it unconditionally, so production traffic can never be
 > **Value checks (since 1.2.0, `dev` and `staging` only).** A validated event carries
 > `eventSpecMetadata` (`schemaId`, `branchId`, `latestActionId`, `sourceId`), and each property
 > that failed a value check carries `failedEventIds` (on the property, or on its children
-> for an object or list of objects). With `PublicEncryptionKey`, the body carries
-> `publicEncryptionKey` and properties carry `encryptedPropertyValue`. None of these keys is
-> sent without a spec or a key, so the body is then exactly the 1.1.x one. See
+> for an object or list of objects); these need a spec. With a usable `PublicEncryptionKey`,
+> the body carries `publicEncryptionKey` and properties carry `encryptedPropertyValue`,
+> whether or not there is a spec. With neither a spec nor a usable key, the body is exactly
+> the 1.1.x one. See
 > [Value checks](#value-checks-dev-and-staging).
 
 ---

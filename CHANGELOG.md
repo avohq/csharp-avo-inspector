@@ -35,7 +35,7 @@ fetch, no value checks, no values sent.
 - **Never drops an event; the first track of an event waits for its spec.** A failed, timed-out (10 s) or missing spec sends the event
   without validation. Specs are cached per instance for 60 s or 50 uses; a 404 is cached for
   60 s and any other failure for 5 s; concurrent tracks of one event share one fetch; at most
-  1,000 events wait for a spec at once, across instances. `Flush()` gives tracks still waiting
+  1,000 events wait for a spec at once, across instances; past that, a track is sent without validation instead of waiting. `Flush()` gives tracks still waiting
   on a spec up to 1 s (at most half its timeout), then sends them without validation, as Node
   2.0.0 does; `Destroy()` abandons spec fetches. An event's `createdAt` is the time of the
   track call, before any spec fetch.
@@ -49,8 +49,9 @@ fetch, no value checks, no values sent.
 - **Native AOT and trimming.** The spec response is read with `JsonDocument` and values are
   written with `Utf8JsonWriter`, so neither needs reflection; `eventSpecMetadata` goes through
   the source-generated context. No new package dependency.
-- **The body is unchanged without a spec or a key.** None of the new keys is sent then, so the
-  wire body is identical to 1.1.x.
+- **The body is unchanged without a spec or a usable key.** `failedEventIds` and
+  `eventSpecMetadata` need a spec; `publicEncryptionKey` and `encryptedPropertyValue` need a
+  usable key, with or without a spec. With neither, the wire body is identical to 1.1.x.
 
 ### Fixed — sampling and the API key match the spec (AVO-3827)
 
