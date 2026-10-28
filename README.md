@@ -461,8 +461,9 @@ a `Prod` instance ignores it unconditionally, so production traffic can never be
 > `eventSpecMetadata` (`schemaId`, `branchId`, `latestActionId`, `sourceId`), and each property
 > that failed a value check carries `failedEventIds` (on the property, or on its children
 > for an object or list of objects); these need a spec. With a usable `PublicEncryptionKey`,
-> the body carries `publicEncryptionKey` and properties carry `encryptedPropertyValue`,
-> whether or not there is a spec. With neither a spec nor a usable key, the body is exactly
+> the body carries `publicEncryptionKey`, and each property that is not a list carries
+> `encryptedPropertyValue` unless its value could not be encrypted (logged); this does not
+> depend on a spec. With neither a spec nor a usable key, the body is exactly
 > the 1.1.x one. See
 > [Value checks](#value-checks-dev-and-staging).
 
