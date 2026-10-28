@@ -223,17 +223,20 @@ input with `originHint` alone, or that output with both. Each checkpoint's spec 
 on its own. A gateway key has no spec without `originHint`; such events are sent without
 value checks.
 
-**It never blocks or drops an event.** A spec is cached for 60 seconds (or 50 events) per
+**It never drops an event; the first track of an event waits for its spec.** A spec is cached for 60 seconds (or 50 events) per
 event name, stream id and checkpoint, and concurrent tracks of the same event share one
 fetch. If the fetch fails, times out (10 seconds), or Avo has no spec for the event, the
 event is sent without value checks, as before; a failed fetch is retried after 5 seconds
-(60 for a 404). The first track of an event therefore waits for its spec fetch;
-`Flush()` waits for tracks still waiting on a spec, within its timeout. Checks are bounded:
+(60 for a 404). The first track of an event therefore waits for its spec fetch.
+`Flush()` gives tracks still waiting on a spec up to 1 second (at most half its timeout) and
+then sends them without value checks, so a slow spec endpoint cannot hold up a flush before
+exit. Checks are bounded:
 a list of more than 1,000 items, or a string of more than 10,000 characters against a
-regex, is not checked. On .NET 7 and later, regex patterns run on .NET's linear-time
-engine (`RegexOptions.NonBacktracking`), which cannot backtrack catastrophically.
-Patterns that engine cannot run (lookarounds, backreferences, `\b`), and every pattern on
-older runtimes, use the backtracking engine. Each regex match has a 100 ms budget, and a
+regex, is not checked. On .NET 8 and later (the SDK's `net8.0` build), regex patterns run
+on .NET's linear-time engine (`RegexOptions.NonBacktracking`), which cannot backtrack
+catastrophically. Patterns that engine cannot run (lookarounds, backreferences, `\b`), and
+every pattern in the `netstandard2.0` build (.NET Framework, .NET 6 and 7), use the
+backtracking engine. Each regex match has a 100 ms budget, and a
 pattern that runs out is skipped from then on.
 
 **`Prod` is unchanged:** no spec fetch, no value checks, no values sent, and no
@@ -248,7 +251,7 @@ Node SDKs) and sent as `encryptedPropertyValue`; only the holder of the matching
 key, in the Inspector Debugger, can read it. An object's value is encrypted as its JSON; a
 list's value is not sent. Copy the public key from your Avo workspace (66 or 130 hex
 characters). A key that cannot be used is reported once on stderr at construction, and
-events are then sent without values.
+events are then sent without values and without the key.
 
 Encryption needs **.NET 8 or later** (the SDK's `net8.0` build): `netstandard2.0` has no
 elliptic-curve Diffie-Hellman. On .NET Framework or .NET 6/7 the key is ignored with a

@@ -33,7 +33,7 @@ the web and Android SDKs).
      maps and lists). Allowed-value keys that are not a JSON array of strings are skipped.
    - Regex: only values `RawValues.TryGetString` accepts can match; any other value fails every
      pattern. A string over 10,000 characters is not checked (logged).
-   - Regex engines: on .NET 7+ a pattern is first rewritten by
+   - Regex engines: in the net8.0 build a pattern is first rewritten by
      `internal static string? ToLinearPattern(string pattern)` and compiled with
      `RegexOptions.NonBacktracking | CultureInvariant`, whose matching time is linear in the input
      (no catastrophic backtracking, like Go's RE2 and Java's RE2J). The rewrite keeps JavaScript's
@@ -41,9 +41,13 @@ the web and Android SDKs).
      class, `\d` → `0-9` and `\w` → `a-zA-Z0-9_`). It returns `null` when it cannot keep the
      JavaScript meaning: `\D`/`\W` inside a class, `\b`/`\B` outside one, an empty class (`[]`,
      `[^]`), `-[` inside a class (.NET class subtraction), or a trailing backslash.
+   - On both engines (`internal static string ToBacktrackingPattern(string pattern)` for the
+     backtracking one), `$` outside a class becomes `\z` and `.` outside a class becomes
+     `[^\n\r\u2028\u2029]`: .NET's `$` also matches before a final `"\n"` and its `.` matches
+     `"\r"`, even with `RegexOptions.ECMAScript`.
    - A pattern the rewrite declines or the linear engine rejects (lookarounds, backreferences,
      atomic groups throw `NotSupportedException`), and every pattern on `netstandard2.0`, compiles on
-     the backtracking engine: `RegexOptions.ECMAScript` (JavaScript's ASCII `\d`/`\w`), falling back to
+     the backtracking engine, after `ToBacktrackingPattern`: `RegexOptions.ECMAScript` (JavaScript's ASCII `\d`/`\w`), falling back to
      `RegexOptions.CultureInvariant` when that option rejects the pattern; an invalid pattern is
      skipped (logged).
    - Each match on either engine has a 100 ms timeout; a timeout skips the pattern and caches it as

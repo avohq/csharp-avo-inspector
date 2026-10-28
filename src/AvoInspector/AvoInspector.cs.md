@@ -166,10 +166,10 @@ An extension beyond the server SDK spec, ported from `node-avo-inspector` 2.0.0.
 
 - **Construction.** Outside `prod` the instance creates an `EventSpecFetcher` (with the
   `apiKey`) and an `EventSpecCache`. `PublicEncryptionKey` (options constructor only; the string
-  constructor passes `null`) is used only outside `prod`: normalized like a gateway hint, sent on
-  every body as `publicEncryptionKey` when set, and parsed into a `ValueEncryptor`. A `prod` body
-  never carries it. A key that cannot
-  be used logs **one** always-on warning naming the fault (never the key), and values are not sent.
+  constructor passes `null`) is used only outside `prod`: normalized like a gateway hint and parsed
+  into a `ValueEncryptor`, and sent on every body as `publicEncryptionKey` only when that succeeds.
+  A `prod` body never carries it. A key that cannot be used logs **one** always-on warning naming
+  the fault (never the key), and neither values nor the key are sent.
   In `prod` neither the fetcher, the cache nor the encryptor exists.
 - **Validation step.** Runs after sampling (a sampled-out event never fetches). `ValidateAsync`
   never throws: it returns `null` (send without validation) on no spec base URL, a cached failure, a
@@ -187,6 +187,13 @@ An extension beyond the server SDK spec, ported from `node-avo-inspector` 2.0.0.
 - **Flush tracking.** Each validating track registers a `TaskCompletionSource` in
   `_pendingValidations` and completes it in a `finally` after `EnqueueAsync` has enqueued and
   dispatched synchronously, so `Flush` sees the event either in the batch or in `_pendingSends`.
+  `Flush` waits for them at most `ValidationGraceMs` (1,000 ms, capped at half its timeout; 1,000 ms
+  for `Timeout.Infinite`). Past that it completes `_giveUpValidations` (and replaces it, so later
+  tracks wait as usual): each track captured that signal when it registered and races it against
+  `ValidateAsync`, so it enqueues without validation at once. The fetch carries on and fills the
+  cache. `Flush` then waits for the enqueues and the sends within the rest of its timeout.
+- **Timestamp.** `createdAt` is taken at the start of `TrackSchemaFromEvent`, before sampling and
+  the spec fetch, and passed through `EnqueueAsync` to `BuildWireEvent`.
 - **Body.** `BuildWireEvent` takes the raw properties and the `EventValidationResult?`. When either a
   result or an encryptor (with non-null properties) is present it deep-copies the schema (the
   resolved schema never carries wire-only fields), encrypts top-level values into
@@ -205,7 +212,7 @@ value). An absent or empty `streamId` becomes `""`.
 
 Each event becomes a `WireEvent` carrying: `apiKey`, `appName`, `appVersion`,
 `libVersion`/`libPlatform` (from `InspectorVersion`), `env` wire string, a fresh lowercase UUID v4
-`messageId`, `streamId`, a UTC `createdAt` formatted `yyyy-MM-dd'T'HH:mm:ss.fff'Z'` (invariant
+`messageId`, `streamId`, a UTC `createdAt` (the time of the track call) formatted `yyyy-MM-dd'T'HH:mm:ss.fff'Z'` (invariant
 culture), the sampling-rate snapshot, `type = "event"`, the event name (null → `""`), and the
 extracted schema as `eventProperties` — plus, since this SDK's 1.1.0, the gateway coordinate fields
 below (SPEC.md §7.3.6; AVO-3516).

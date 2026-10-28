@@ -271,6 +271,60 @@ namespace Avo.Inspector.Tests
             }
         }
 
+        [Theory]
+        [InlineData(AvoInspectorEnv.Dev)]
+        [InlineData(AvoInspectorEnv.Staging)]
+        public async Task Flush_sends_an_event_whose_spec_is_slow_without_validation_within_its_timeout(AvoInspectorEnv env)
+        {
+            // A serverless "track, Flush, exit" handler must not lose the event to a hung spec
+            // endpoint: past the validation grace, Flush sends it unvalidated within its own timeout.
+            using var server = new TestInspectorServer();
+            server.ConfigureSpec(200, PlanSpec, delayMs: 5_000);
+            using (new MockEndpointScope(server.BaseUrl))
+            {
+                var inspector = new AvoInspector(new AvoInspectorOptions
+                {
+                    ApiKey = "key-1", Env = env, Version = "1.0.0", BatchSize = 30, DisableBatchTimer = true
+                });
+                inspector.EnableLogging(false);
+                try
+                {
+                    var track = inspector.TrackSchemaFromEvent("Upgrade", Props.Of(("plan", "Enterprise")), null);
+                    var watch = System.Diagnostics.Stopwatch.StartNew();
+                    await inspector.Flush(1_000);
+                    watch.Stop();
+
+                    Assert.Equal(1, server.RequestCount);
+                    Assert.False(Event(server).TryGetProperty("eventSpecMetadata", out _));
+                    Assert.True(watch.ElapsedMilliseconds < 1_500, "Flush took " + watch.ElapsedMilliseconds + " ms");
+                    Assert.Single(await track);
+                }
+                finally
+                {
+                    inspector.Destroy();
+                }
+            }
+        }
+
+        [Fact]
+        public async Task An_event_is_timestamped_when_tracked_not_after_its_spec_fetch()
+        {
+            using var server = new TestInspectorServer();
+            server.ConfigureSpec(200, PlanSpec, delayMs: 800);
+            using (new MockEndpointScope(server.BaseUrl))
+            {
+                var before = DateTime.UtcNow;
+                await Staging().TrackSchemaFromEvent("Upgrade", Props.Of(("plan", "Enterprise")), null);
+
+                var evt = Event(server);
+                Assert.True(evt.TryGetProperty("eventSpecMetadata", out _));
+                var createdAt = DateTime.Parse(evt.GetProperty("createdAt").GetString()!,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AdjustToUniversal);
+                Assert.True(createdAt - before < TimeSpan.FromMilliseconds(400), "createdAt is " + (createdAt - before).TotalMilliseconds + " ms after the call");
+            }
+        }
+
         [Fact]
         public async Task Destroy_during_a_spec_fetch_sends_nothing()
         {
@@ -357,6 +411,11 @@ namespace Avo.Inspector.Tests
                 Assert.False(inspector.IsEncryptionActiveForTesting);
                 Assert.Contains("publicEncryptionKey", console.Output);
                 Assert.DoesNotContain("not-a-key", console.Output);
+
+                // Nor is the key: the body is the one an instance without a key sends.
+                var body = InspectorHttpSender.SerializeBody(new[] { inspector.BuildWireEventForTesting("E", Props.Of(("plan", "Pro"))) });
+                using var doc = JsonDocument.Parse(body);
+                Assert.False(doc.RootElement[0].TryGetProperty("publicEncryptionKey", out _));
             }
         }
     }

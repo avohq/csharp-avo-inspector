@@ -61,6 +61,8 @@ namespace Avo.Inspector.Tests
         [Theory]
         [InlineData(PublicKeyHex)]
         [InlineData(CompressedPublicKeyHex)]
+        [InlineData("0x" + PublicKeyHex)]           // the web and Android SDKs accept the prefix
+        [InlineData("0X" + CompressedPublicKeyHex)]
         public void Encrypted_values_decrypt_with_the_private_key(string publicKeyHex)
         {
             var encryptor = ValueEncryptor.TryCreate(publicKeyHex, out var error);

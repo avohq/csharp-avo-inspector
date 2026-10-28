@@ -434,13 +434,13 @@ namespace Avo.Inspector.Internal.EventSpec
         }
 
         /// <summary>
-        /// Compiles a tracking-plan pattern. On .NET 7 and later a pattern is compiled first with
+        /// Compiles a tracking-plan pattern. In the net8.0 build a pattern is compiled first with
         /// <see cref="RegexOptions"/><c>.NonBacktracking</c>, whose matching time is linear in the
         /// input, so no pattern can backtrack catastrophically (the guarantee Go's RE2 and Java's
         /// RE2J give). That engine cannot take <c>RegexOptions.ECMAScript</c>, so
         /// <see cref="ToLinearPattern"/> first rewrites <c>\d</c> and <c>\w</c> to JavaScript's
         /// ASCII classes. A pattern it cannot take (lookarounds, backreferences, <c>\b</c>) and every
-        /// pattern on older runtimes use the backtracking engine: ECMAScript semantics first, the
+        /// pattern in the netstandard2.0 build use the backtracking engine: ECMAScript semantics first, the
         /// default .NET syntax when that option rejects the pattern. Every match has a timeout either
         /// way, which on the backtracking engine stands in for the Node SDK's static unsafe-pattern
         /// check.
@@ -486,15 +486,16 @@ namespace Avo.Inspector.Internal.EventSpec
 
         private static Regex? CompileBacktracking(string pattern, bool shouldLog)
         {
+            var rewritten = ToBacktrackingPattern(pattern);
             try
             {
-                return new Regex(pattern, RegexOptions.ECMAScript, RegexMatchTimeout);
+                return new Regex(rewritten, RegexOptions.ECMAScript, RegexMatchTimeout);
             }
             catch (ArgumentException)
             {
                 try
                 {
-                    return new Regex(pattern, RegexOptions.CultureInvariant, RegexMatchTimeout);
+                    return new Regex(rewritten, RegexOptions.CultureInvariant, RegexMatchTimeout);
                 }
                 catch (ArgumentException)
                 {
@@ -507,13 +508,25 @@ namespace Avo.Inspector.Internal.EventSpec
         /// <summary>
         /// Rewrites a JavaScript pattern for the default .NET syntax so that <c>\d</c>, <c>\D</c>,
         /// <c>\w</c> and <c>\W</c> keep JavaScript's ASCII meaning (.NET's match any Unicode digit
-        /// or letter). Returns <c>null</c> for a pattern whose meaning the rewrite cannot keep:
+        /// or letter), and <c>$</c> and <c>.</c> keep theirs (see <see cref="ToBacktrackingPattern"/>).
+        /// Returns <c>null</c> for a pattern whose meaning the rewrite cannot keep:
         /// <c>\D</c> or <c>\W</c> inside a character class, <c>\b</c> or <c>\B</c> (word boundaries
         /// use .NET's Unicode word characters), an empty class (<c>[]</c>, <c>[^]</c>) or <c>-[</c>
         /// inside a class, which .NET parses differently. Such a pattern goes to the backtracking
         /// engine instead.
         /// </summary>
-        internal static string? ToLinearPattern(string pattern)
+        internal static string? ToLinearPattern(string pattern) => RewritePattern(pattern, linear: true);
+
+        /// <summary>
+        /// Rewrites the two tokens .NET reads differently from JavaScript on either engine, even
+        /// with <c>RegexOptions.ECMAScript</c>: outside a character class, <c>$</c> becomes
+        /// <c>\z</c> (.NET's <c>$</c> also matches before a final <c>"\n"</c>) and <c>.</c> becomes
+        /// <c>[^\n\r\u2028\u2029]</c> (.NET's <c>.</c> matches <c>"\r"</c> and the two
+        /// separators). Everything else is left to the engine.
+        /// </summary>
+        internal static string ToBacktrackingPattern(string pattern) => RewritePattern(pattern, linear: false)!;
+
+        private static string? RewritePattern(string pattern, bool linear)
         {
             var result = new System.Text.StringBuilder(pattern.Length + 16);
             var inClass = false;
@@ -524,9 +537,14 @@ namespace Avo.Inspector.Internal.EventSpec
                 {
                     if (i + 1 >= pattern.Length)
                     {
-                        return null;
+                        return linear ? null : result.Append(c).ToString();
                     }
                     var next = pattern[++i];
+                    if (!linear)
+                    {
+                        result.Append('\\').Append(next);
+                        continue;
+                    }
                     switch (next)
                     {
                         case 'd':
@@ -560,7 +578,7 @@ namespace Avo.Inspector.Internal.EventSpec
                 if (!inClass && c == '[')
                 {
                     var close = i + 1 < pattern.Length && pattern[i + 1] == '^' ? i + 2 : i + 1;
-                    if (close < pattern.Length && pattern[close] == ']')
+                    if (linear && close < pattern.Length && pattern[close] == ']')
                     {
                         return null;
                     }
@@ -570,10 +588,20 @@ namespace Avo.Inspector.Internal.EventSpec
                 {
                     inClass = false;
                 }
-                else if (inClass && c == '[' && pattern[i - 1] == '-')
+                else if (linear && inClass && c == '[' && pattern[i - 1] == '-')
                 {
                     // "-[" inside a class is .NET's class subtraction; in JavaScript it is literal.
                     return null;
+                }
+                else if (!inClass && c == '$')
+                {
+                    result.Append("\\z");
+                    continue;
+                }
+                else if (!inClass && c == '.')
+                {
+                    result.Append("[^\\n\\r\\u2028\\u2029]");
+                    continue;
                 }
                 result.Append(c);
             }

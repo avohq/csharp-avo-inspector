@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using Avo.Inspector.Internal;
 using Avo.Inspector.Internal.EventSpec;
 using Xunit;
@@ -144,13 +145,35 @@ namespace Avo.Inspector.Tests
         }
 
         [Theory]
-        [InlineData(@"^\d+$", "^[0-9]+$")]
-        [InlineData(@"^[\d.]+$", "^[0-9.]+$")]
+        [InlineData("^[0-9]+$", "123\n")]
+        [InlineData("^a.b$", "a\rb")]
+        [InlineData("^a.b$", "a\u2028b")]
+        [InlineData("^(?=a)a.b$", "a\rb")]     // a lookahead: the backtracking engine
+        [InlineData("^(?=1)[0-9]+$", "123\n")]
+        public void Regex_dollar_and_dot_keep_JavaScript_semantics(string pattern, string value)
+        {
+            // .NET's $ also matches before a final "\n" and its . matches "\r", on both engines.
+            var spec = Spec("{\"a\":{\"t\":\"string\",\"rx\":{" + JsonSerializer.Serialize(pattern) + ":[\"evt\"]}}}");
+            Assert.Equal(new[] { "evt" }, Failed(spec, Props.Of(("a", value)), "a"));
+        }
+
+        [Fact]
+        public void Regex_dollar_and_dot_still_match_what_JavaScript_matches()
+        {
+            var spec = Spec("{\"a\":{\"t\":\"string\",\"rx\":{\"^[0-9]+$\":[\"evt\"]}},\"b\":{\"t\":\"string\",\"rx\":{\"^(?=a)a.b$\":[\"evt\"]}}}");
+            Assert.Null(Failed(spec, Props.Of(("a", "123")), "a"));
+            Assert.Null(Failed(spec, Props.Of(("b", "a b")), "b"));
+        }
+
+        [Theory]
+        [InlineData(@"^\d+$", @"^[0-9]+\z")]
+        [InlineData(@"^[\d.]+$", @"^[0-9.]+\z")]
         [InlineData(@"\w\W\D", "[a-zA-Z0-9_][^a-zA-Z0-9_][^0-9]")]
         [InlineData(@"[\w-]", "[a-zA-Z0-9_-]")]
         [InlineData(@"\\d", @"\\d")]           // an escaped backslash, then a literal d
         [InlineData(@"[\b]", @"[\b]")]           // backspace inside a class
-        [InlineData(@"^\s\.\u0041$", @"^\s\.\u0041$")]
+        [InlineData(@"^\s\.\u0041$", @"^\s\.\u0041\z")]
+        [InlineData(@"^a.b\$", @"^a[^\n\r\u2028\u2029]b\$")]
         [InlineData(@"[\D]", null)]
         [InlineData(@"[^\W]", null)]
         [InlineData(@"\bword", null)]

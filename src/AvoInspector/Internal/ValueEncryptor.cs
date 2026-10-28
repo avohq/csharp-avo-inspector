@@ -49,10 +49,16 @@ namespace Avo.Inspector.Internal
             return null;
 #else
             error = null;
+            var hex = publicKeyHex.Trim();
+            if (hex.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            {
+                // The web and Android SDKs accept a 0x-prefixed key too.
+                hex = hex.Substring(2);
+            }
             byte[] point;
             try
             {
-                point = FromHex(publicKeyHex.Trim());
+                point = FromHex(hex);
             }
             catch (FormatException)
             {

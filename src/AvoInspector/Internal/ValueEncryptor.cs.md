@@ -10,7 +10,8 @@ tag][ciphertext])`, P-256 ECDH, AES key = SHA-256 of the shared secret's X coord
 
 ## Functional requirements
 
-- `TryCreate(publicKeyHex, out error)`: accepts an uncompressed (`04…`, 130 hex) or compressed
+- `TryCreate(publicKeyHex, out error)`: trims the key and drops a `0x`/`0X` prefix (as the web and
+  Android SDKs accept), then accepts an uncompressed (`04…`, 130 hex) or compressed
   (`02…`/`03…`, 66 hex) P-256 key, decompressing with `y = rhs^((p+1)/4) mod p` and the prefix's
   parity. Performs one trial derivation, so an off-curve key or a platform without P-256 ECDH fails
   here. Returns `null` with an `error` that never contains the key. On the netstandard2.0 build

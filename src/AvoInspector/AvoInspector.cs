@@ -48,6 +48,11 @@ namespace Avo.Inspector
         private const int MaxWaitingValidations = 1_000;
         private static int _waitingValidations;
 
+        // How long Flush waits for tracks still fetching their event spec before it sends them
+        // without validation (the Node SDK's VALIDATION_GRACE_MS). Capped at half the flush timeout,
+        // so the send keeps the rest of it.
+        private const int ValidationGraceMs = 1_000;
+
         private readonly object _lock = new object();
 
         // Constructor options — fixed at construction (SPEC.md §5). Treated as immutable after init.
@@ -62,8 +67,8 @@ namespace Avo.Inspector
         private bool _disableBatchTimer;
 
         // Event spec validation and value encryption (AVO-4069). The fetcher and cache exist only in
-        // dev and staging; the encryptor only there and with a usable PublicEncryptionKey. There the
-        // key itself is sent on every body when configured, as the Node SDK does.
+        // dev and staging; the encryptor only there and with a usable PublicEncryptionKey. The key
+        // itself is sent on every body exactly when the encryptor exists, as the Node SDK does.
         private EventSpecFetcher? _specFetcher;
         private EventSpecCache? _specCache;
         private ValueEncryptor? _encryptor;
@@ -76,6 +81,10 @@ namespace Avo.Inspector
         // Tracks waiting on an event spec, each completed once its event is enqueued, so Flush can
         // wait for them before it swaps out the batch.
         private readonly HashSet<Task> _pendingValidations = new HashSet<Task>();
+        // Completed by Flush once its validation grace is up: the tracks waiting on it stop waiting
+        // for their spec and enqueue without validation. Replaced on each use, so later tracks wait
+        // as usual.
+        private TaskCompletionSource<bool> _giveUpValidations = NewGiveUpSignal();
         private bool _destroyed;
         private Timer? _flushTimer;
         // Cancelled by Destroy() to abort in-flight HTTP sends (SPEC.md §4.5 — abandon in-flight).
@@ -230,17 +239,22 @@ namespace Avo.Inspector
             // prod sends the schema alone, as before (not even the encryption key).
             if (env != AvoInspectorEnv.Prod)
             {
-                _publicEncryptionKey = NormalizeHint(publicEncryptionKey);
                 _specFetcher = new EventSpecFetcher(_apiKey);
                 _specCache = new EventSpecCache();
-                if (_publicEncryptionKey != null)
+                var encryptionKey = NormalizeHint(publicEncryptionKey);
+                if (encryptionKey != null)
                 {
-                    _encryptor = ValueEncryptor.TryCreate(_publicEncryptionKey, out var encryptionError);
+                    _encryptor = ValueEncryptor.TryCreate(encryptionKey, out var encryptionError);
                     if (_encryptor == null)
                     {
                         // Once, at construction, so a bad key does not log on every event. Names the
-                        // fault, never the key. Validation still runs; values are not sent.
+                        // fault, never the key. Validation still runs; values and the key are not
+                        // sent.
                         Logger.Warn(encryptionError + "; property values will not be sent.");
+                    }
+                    else
+                    {
+                        _publicEncryptionKey = encryptionKey;
                     }
                 }
             }
@@ -373,6 +387,8 @@ namespace Avo.Inspector
                 }
             }
 
+            // Stamped at the call, not at enqueue, so a spec fetch does not delay or reorder it.
+            var createdAt = DateTime.UtcNow;
             IReadOnlyList<SchemaEntry> eventSchema;
             string resolvedStreamId;
             double samplingSnapshot;
@@ -404,27 +420,33 @@ namespace Avo.Inspector
             if (_specFetcher == null)
             {
                 return await EnqueueAsync(
-                    eventName, resolvedStreamId, samplingSnapshot, eventSchema, eventProperties,
+                    eventName, resolvedStreamId, samplingSnapshot, createdAt, eventSchema, eventProperties,
                     outputReference, originHint, originAppVersion, null).ConfigureAwait(false);
             }
 
             // Dev and staging (AVO-4069): validate the values against the event spec first. Flush
             // waits on `enqueued`, which completes once the event is in the batch (or its send has
-            // started), so a Flush during the spec fetch still sends this event.
+            // started), so a Flush during the spec fetch still sends this event. Past its grace,
+            // Flush completes `giveUp` and the event goes without validation; the fetch carries on
+            // and fills the cache for later events.
             var enqueued = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Task giveUp;
             lock (_lock)
             {
                 _pendingValidations.Add(enqueued.Task);
+                giveUp = _giveUpValidations.Task;
             }
             Task<IReadOnlyList<SchemaEntry>> result;
             try
             {
-                var validation = await ValidateAsync(
-                    eventName, resolvedStreamId, eventSchema, eventProperties, outputReference, originHint)
-                    .ConfigureAwait(false);
+                var validating = ValidateAsync(
+                    eventName, resolvedStreamId, eventSchema, eventProperties, outputReference, originHint);
+                var validation = await Task.WhenAny(validating, giveUp).ConfigureAwait(false) == validating
+                    ? await validating.ConfigureAwait(false)
+                    : null;
                 // EnqueueAsync enqueues and dispatches synchronously, before its first await.
                 result = EnqueueAsync(
-                    eventName, resolvedStreamId, samplingSnapshot, eventSchema, eventProperties,
+                    eventName, resolvedStreamId, samplingSnapshot, createdAt, eventSchema, eventProperties,
                     outputReference, originHint, originAppVersion, validation);
             }
             finally
@@ -447,6 +469,7 @@ namespace Avo.Inspector
             string eventName,
             string resolvedStreamId,
             double samplingSnapshot,
+            DateTime createdAt,
             IReadOnlyList<SchemaEntry> eventSchema,
             IDictionary<string, object?>? eventProperties,
             string? outputReference,
@@ -458,7 +481,7 @@ namespace Avo.Inspector
             try
             {
                 var body = BuildWireEvent(
-                    eventName, resolvedStreamId, samplingSnapshot, eventSchema,
+                    eventName, resolvedStreamId, samplingSnapshot, createdAt, eventSchema,
                     outputReference, originHint, originAppVersion, eventProperties, validation);
 
                 List<WireEvent>? batchToSend = null;
@@ -522,15 +545,17 @@ namespace Avo.Inspector
         /// Force-flushes the pending batch, then waits (up to <paramref name="timeoutMs"/>) for all
         /// in-flight sends to complete or be abandoned (SPEC.md §4.6, §12.6). Always resolves — a
         /// completion guarantee, not a delivery guarantee. A no-op after <see cref="Destroy"/>. The
-        /// instance remains usable afterward.
+        /// instance remains usable afterward. In dev and staging, tracks still waiting for their
+        /// event spec get up to 1 s (at most half the timeout) and are then sent without validation.
         /// </summary>
         /// <param name="timeoutMs">Maximum time to wait for in-flight sends (default 10,000 ms).</param>
         public async Task Flush(int timeoutMs = DefaultFlushTimeoutMs)
         {
             var started = Stopwatch.StartNew();
 
-            // Dev and staging: tracks still waiting for their event spec are enqueued first, within
-            // the same timeout, so this flush sends them too.
+            // Dev and staging: tracks still waiting for their event spec are enqueued first, so this
+            // flush sends them too. They get a short grace to finish validating; past it they are
+            // sent without validation, so a slow spec endpoint cannot use up the send's budget.
             Task[] validations;
             lock (_lock)
             {
@@ -542,18 +567,24 @@ namespace Avo.Inspector
             }
             if (validations.Length > 0)
             {
-                try
+                var allEnqueued = Task.WhenAll(validations);
+                var graceMs = timeoutMs == Timeout.Infinite
+                    ? ValidationGraceMs
+                    : Math.Min(ValidationGraceMs, timeoutMs / 2);
+                await WaitAtMost(allEnqueued, graceMs).ConfigureAwait(false);
+                if (!allEnqueued.IsCompleted)
                 {
-                    await Task.WhenAny(Task.WhenAll(validations), Task.Delay(timeoutMs)).ConfigureAwait(false);
-                }
-                catch
-                {
-                    // SPEC.md §4.6 — flush() MUST resolve in all cases.
+                    TaskCompletionSource<bool> giveUp;
+                    lock (_lock)
+                    {
+                        giveUp = _giveUpValidations;
+                        _giveUpValidations = NewGiveUpSignal();
+                    }
+                    giveUp.TrySetResult(true);
+                    await WaitAtMost(allEnqueued, RemainingMs(started, timeoutMs)).ConfigureAwait(false);
                 }
             }
-            var remainingMs = timeoutMs == Timeout.Infinite
-                ? Timeout.Infinite
-                : (int)Math.Max(0, timeoutMs - started.ElapsedMilliseconds);
+            var remainingMs = RemainingMs(started, timeoutMs);
 
             List<WireEvent>? batch = null;
             lock (_lock)
@@ -584,16 +615,28 @@ namespace Avo.Inspector
                 return;
             }
 
+            await WaitAtMost(Task.WhenAll(sends), remainingMs).ConfigureAwait(false);
+        }
+
+        private static int RemainingMs(Stopwatch started, int timeoutMs)
+            => timeoutMs == Timeout.Infinite
+                ? Timeout.Infinite
+                : (int)Math.Max(0, timeoutMs - started.ElapsedMilliseconds);
+
+        private static async Task WaitAtMost(Task task, int timeoutMs)
+        {
             try
             {
-                var all = Task.WhenAll(sends);
-                await Task.WhenAny(all, Task.Delay(remainingMs)).ConfigureAwait(false);
+                await Task.WhenAny(task, Task.Delay(timeoutMs)).ConfigureAwait(false);
             }
             catch
             {
                 // SPEC.md §4.6 — flush() MUST resolve in all cases, even if a send faulted.
             }
         }
+
+        private static TaskCompletionSource<bool> NewGiveUpSignal()
+            => new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         /// <summary>
         /// Cancels and cleans up (SPEC.md §4.5, §11.3): discards the pending batch unsent, abandons
@@ -657,6 +700,7 @@ namespace Avo.Inspector
             string eventName,
             string streamId,
             double samplingSnapshot,
+            DateTime createdAt,
             IReadOnlyList<SchemaEntry> eventSchema,
             string? rawOutputReference,
             string? rawOriginHint,
@@ -714,7 +758,7 @@ namespace Avo.Inspector
                 LibPlatform = InspectorVersion.LibPlatform,
                 MessageId = Guid.NewGuid().ToString("D"), // UUID v4, lowercase hex (SPEC.md §8.1)
                 StreamId = streamId,
-                CreatedAt = DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture),
+                CreatedAt = createdAt.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture),
                 SamplingRate = samplingSnapshot,
                 Type = "event",
                 EventName = eventName ?? string.Empty,
@@ -1077,7 +1121,7 @@ namespace Avo.Inspector
         // The body an unvalidated event would get, without sending it (a prod instance ignores the
         // mock endpoint, so its sends cannot be captured).
         internal WireEvent BuildWireEventForTesting(string eventName, IDictionary<string, object?> eventProperties)
-            => BuildWireEvent(eventName, string.Empty, 1.0, ExtractSchema(eventProperties),
+            => BuildWireEvent(eventName, string.Empty, 1.0, DateTime.UtcNow, ExtractSchema(eventProperties),
                 null, null, null, eventProperties, null);
     }
 }

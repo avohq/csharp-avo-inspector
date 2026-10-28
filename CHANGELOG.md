@@ -28,19 +28,23 @@ fetch, no value checks, no values sent.
   of the gateway input or of that output. Each checkpoint's spec is cached and fetched on its own.
 - **`PublicEncryptionKey` option.** With a hex P-256 public key, `Dev` and `Staging` send each
   property's value encrypted (ECIES, AES-256-GCM, the web and Node SDKs' format) as
-  `encryptedPropertyValue`, so the Debugger can show decrypted values. The key is sent on the
-  body as `publicEncryptionKey` (never in `prod`). Lists' values are not sent; every property stays in the schema.
-  Needs .NET 8 or later; on older runtimes the key is ignored with a warning at construction.
-- **Never blocks or drops an event.** A failed, timed-out (10 s) or missing spec sends the event
+  `encryptedPropertyValue`, so the Debugger can show decrypted values. A usable key is sent on
+  the body as `publicEncryptionKey` (never in `prod`). Lists' values are not sent; every property stays in the schema.
+  Needs .NET 8 or later (the `net8.0` build); an app on the `netstandard2.0` build (.NET
+  Framework, .NET 6 and 7) gets a warning at construction, and neither values nor the key are sent.
+- **Never drops an event; the first track of an event waits for its spec.** A failed, timed-out (10 s) or missing spec sends the event
   without validation. Specs are cached per instance for 60 s or 50 uses; a 404 is cached for
   60 s and any other failure for 5 s; concurrent tracks of one event share one fetch; at most
-  1,000 events wait for a spec at once, across instances. `Flush()` first waits, within its
-  timeout, for tracks still waiting on a spec, and `Destroy()` abandons spec fetches.
-- **A tracking-plan regex cannot hang a track.** On .NET 7 and later, patterns run on the
-  linear-time `RegexOptions.NonBacktracking` engine, as Go (RE2) and Java (RE2J) do, with
-  `\d` and `\w` rewritten to JavaScript's ASCII classes. Patterns that engine cannot run
-  (lookarounds, backreferences, `\b`), and every pattern on older runtimes, use the
-  backtracking engine with JavaScript semantics. Every match has a 100 ms budget, and a pattern
+  1,000 events wait for a spec at once, across instances. `Flush()` gives tracks still waiting
+  on a spec up to 1 s (at most half its timeout), then sends them without validation, as Node
+  2.0.0 does; `Destroy()` abandons spec fetches. An event's `createdAt` is the time of the
+  track call, before any spec fetch.
+- **A tracking-plan regex cannot hang a track.** On .NET 8 and later (the `net8.0` build),
+  patterns run on the linear-time `RegexOptions.NonBacktracking` engine, as Go (RE2) and Java
+  (RE2J) do, with `\d` and `\w` rewritten to JavaScript's ASCII classes. Patterns that engine
+  cannot run (lookarounds, backreferences, `\b`), and every pattern in the `netstandard2.0`
+  build, use the backtracking engine with JavaScript semantics. On both engines `$` matches
+  only at the end of the value and `.` does not match line terminators, as in JavaScript. Every match has a 100 ms budget, and a pattern
   that runs out is skipped from then on.
 - **Native AOT and trimming.** The spec response is read with `JsonDocument` and values are
   written with `Utf8JsonWriter`, so neither needs reflection; `eventSpecMetadata` goes through

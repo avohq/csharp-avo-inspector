@@ -34,6 +34,7 @@ public sealed class AvoInspectorOptions
 - Serverless deployments SHOULD set `DisableBatchTimer = true` (SPEC.md §11.2).
 - `PublicEncryptionKey` (AVO-4069, an extension beyond the spec): in `Dev`/`Staging`, property
   values are sent encrypted with it as `encryptedPropertyValue`; never used for encryption in
-  `Prod`; needs .NET 8 or later. Only on the options constructor.
+  `Prod`; needs .NET 8 or later (the net8.0 build). A `0x` prefix is accepted. Only on the options
+  constructor.
 - Default property values: `ApiKey`/`Version` default to `""`, `Env` defaults to `Dev`; nullable
   options default to `null` (meaning "use the SDK default").
