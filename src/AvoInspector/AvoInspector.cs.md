@@ -190,7 +190,9 @@ An extension beyond the server SDK spec, ported from `node-avo-inspector` 2.0.0.
   `Flush` waits for them at most `ValidationGraceMs` (1,000 ms, capped at half its timeout; 1,000 ms
   for `Timeout.Infinite`). Past that it completes `_giveUpValidations` (and replaces it, so later
   tracks wait as usual): each track captured that signal when it registered and races it against
-  `ValidateAsync`, so it enqueues without validation at once; `Flush` logs how many. The fetch
+  `ValidateAsync`, so it enqueues without validation at once. Under the same lock as the swap,
+  `Flush` snapshots `_pendingValidations` again, so a track that registered during the grace (and
+  so holds the old signal) is waited for too; it logs how many. The fetch
   carries on and fills the cache, but `ValidateAsync` (which also gets the signal) then skips
   validating and logging that event's result. `Flush` then waits for the enqueues and the sends within the rest of its timeout.
 - **Timestamp.** `createdAt` is taken at the start of `TrackSchemaFromEvent`, before sampling and

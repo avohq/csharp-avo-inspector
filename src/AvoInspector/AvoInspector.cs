@@ -574,16 +574,20 @@ namespace Avo.Inspector
                 await WaitAtMost(allEnqueued, graceMs).ConfigureAwait(false);
                 if (!allEnqueued.IsCompleted)
                 {
-                    Logger.Error(_shouldLog, "Flush: sending " + validations.Count(t => !t.IsCompleted)
-                        + " event(s) without waiting for their event spec.");
+                    // Every track still waiting holds this signal, including any that started during
+                    // the grace (both happen under the lock), so all of them are given up and waited for.
                     TaskCompletionSource<bool> giveUp;
+                    Task[] givenUp;
                     lock (_lock)
                     {
                         giveUp = _giveUpValidations;
                         _giveUpValidations = NewGiveUpSignal();
+                        givenUp = _pendingValidations.ToArray();
                     }
+                    Logger.Error(_shouldLog, "Flush: sending " + givenUp.Length
+                        + " event(s) without waiting for their event spec.");
                     giveUp.TrySetResult(true);
-                    await WaitAtMost(allEnqueued, RemainingMs(started, timeoutMs)).ConfigureAwait(false);
+                    await WaitAtMost(Task.WhenAll(givenUp), RemainingMs(started, timeoutMs)).ConfigureAwait(false);
                 }
             }
             var remainingMs = RemainingMs(started, timeoutMs);

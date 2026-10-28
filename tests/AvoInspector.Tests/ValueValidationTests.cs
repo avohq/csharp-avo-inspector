@@ -307,6 +307,33 @@ namespace Avo.Inspector.Tests
         }
 
         [Fact]
+        public async Task Flush_also_sends_a_track_that_started_during_its_validation_grace()
+        {
+            using var server = new TestInspectorServer();
+            server.ConfigureSpec(200, PlanSpec, delayMs: 5_000);
+            using (new MockEndpointScope(server.BaseUrl))
+            {
+                var inspector = Staging(batchSize: 30);
+                try
+                {
+                    var first = inspector.TrackSchemaFromEvent("Upgrade", Props.Of(("plan", "Enterprise")), null);
+                    var flush = inspector.Flush(1_000);
+                    await Task.Delay(200); // inside the 500 ms grace
+                    var second = inspector.TrackSchemaFromEvent("Downgrade", Props.Of(("plan", "Free")), null);
+                    await flush;
+
+                    using var doc = JsonDocument.Parse(Assert.Single(server.Requests).Body);
+                    Assert.Equal(2, doc.RootElement.GetArrayLength());
+                    await Task.WhenAll(first, second);
+                }
+                finally
+                {
+                    inspector.Destroy();
+                }
+            }
+        }
+
+        [Fact]
         public async Task Flush_logs_the_events_it_sends_unvalidated_and_not_their_late_result()
         {
             using var server = new TestInspectorServer();
