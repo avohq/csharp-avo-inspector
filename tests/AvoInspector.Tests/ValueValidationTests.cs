@@ -425,6 +425,27 @@ namespace Avo.Inspector.Tests
             }
         }
 
+#if INSPECTOR_NETSTANDARD2_0
+        [Fact]
+        public async Task The_netstandard2_0_build_validates_but_never_sends_values()
+        {
+            using var server = new TestInspectorServer();
+            server.ConfigureSpec(200, PlanSpec);
+            using (new MockEndpointScope(server.BaseUrl))
+            {
+                var inspector = Staging(EncryptionTests.PublicKeyHex);
+                Assert.True(inspector.IsValidationActiveForTesting);
+                Assert.False(inspector.IsEncryptionActiveForTesting);
+                await inspector.TrackSchemaFromEvent("Upgrade", Props.Of(("plan", "Enterprise"), ("seats", 3)), null);
+
+                var evt = Event(server);
+                Assert.False(evt.TryGetProperty("publicEncryptionKey", out _));
+                Assert.False(Property(evt, "plan").TryGetProperty("encryptedPropertyValue", out _));
+                Assert.False(Property(evt, "seats").TryGetProperty("encryptedPropertyValue", out _));
+                Assert.Equal(new[] { "evt_1", "var_1" }, FailedIds(Property(evt, "plan")));
+            }
+        }
+#else
         [Fact]
         public async Task Values_are_encrypted_for_the_debugger()
         {
@@ -455,6 +476,7 @@ namespace Avo.Inspector.Tests
                 Assert.Equal(new[] { "evt_1", "var_1" }, FailedIds(Property(evt, "plan")));
             }
         }
+#endif
 
         [Fact]
         public void An_unusable_key_is_reported_once_and_values_are_not_sent()

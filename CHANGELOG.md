@@ -52,6 +52,9 @@ fetch, no value checks, no values sent.
 - **The body is unchanged without a spec or a usable key.** `failedEventIds` and
   `eventSpecMetadata` need a spec; `publicEncryptionKey` and `encryptedPropertyValue` need a
   usable key, with or without a spec. With neither, the wire body is identical to 1.1.x.
+- **The `netstandard2.0` build is tested.** `AvoInspector.Tests.NetStandard` runs the unit tests
+  against it in CI and before a release, including that it validates without encrypting and
+  that a pattern which times out is skipped.
 
 ### Fixed — sampling and the API key match the spec (AVO-3827)
 

@@ -124,7 +124,17 @@ namespace Avo.Inspector.Tests
             // out of its budget and be skipped; the linear-time engine fails the value straight away.
             var spec = Spec("{\"a\":{\"t\":\"string\",\"rx\":{\"^(a+)+$\":[\"evt\"]}}}");
             var watch = System.Diagnostics.Stopwatch.StartNew();
+#if INSPECTOR_NETSTANDARD2_0
+            // The netstandard2.0 build has only the backtracking engine: the match runs out of its
+            // budget and the pattern is skipped, a missed failure rather than a false one.
+            Assert.Null(Failed(spec, Props.Of(("a", new string('a', 5_000) + "!")), "a"));
+            // It is never run again, so the next value doesn't spend another 100 ms budget on it.
+            var again = System.Diagnostics.Stopwatch.StartNew();
+            Assert.Null(Failed(spec, Props.Of(("a", new string('a', 5_000) + "!")), "a"));
+            Assert.True(again.ElapsedMilliseconds < 100, "took " + again.ElapsedMilliseconds + " ms");
+#else
             Assert.Equal(new[] { "evt" }, Failed(spec, Props.Of(("a", new string('a', 5_000) + "!")), "a"));
+#endif
             Assert.True(watch.ElapsedMilliseconds < 1_000, "took " + watch.ElapsedMilliseconds + " ms");
             Assert.Null(Failed(spec, Props.Of(("a", new string('a', 5_000))), "a"));
         }

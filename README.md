@@ -511,7 +511,15 @@ The vendored fixtures under `conformance/fixtures/` (a byte-identical snapshot o
 suite) also back a self-contained `dotnet test` run.
 
 ```sh
-dotnet test       # unit tests + the 13 schema-extraction golden fixtures
+dotnet test       # unit tests + the 13 schema-extraction golden fixtures, against both builds
+```
+
+`AvoInspector.Tests.NetStandard` runs the same tests against the `netstandard2.0` build (the one
+.NET Framework, .NET 6 and .NET 7 apps load), on the .NET 8 runtime. Tests whose result differs
+by build, such as encryption and the linear-time regex engine, check `INSPECTOR_NETSTANDARD2_0`.
+
+```sh
+dotnet test tests/AvoInspector.Tests.NetStandard/AvoInspector.Tests.NetStandard.csproj
 ```
 
 ---
@@ -561,6 +569,7 @@ manager, not in the repo.
 
    ```sh
    dotnet test tests/AvoInspector.Tests/AvoInspector.Tests.csproj -c Release
+   dotnet test tests/AvoInspector.Tests.NetStandard/AvoInspector.Tests.NetStandard.csproj -c Release
    ./scripts/run-conformance.sh          # see SPEC_REF in the script header
    ```
 

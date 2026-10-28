@@ -58,6 +58,17 @@ namespace Avo.Inspector.Tests
             Assert.Equal(expectedTag, tag);
         }
 
+#if INSPECTOR_NETSTANDARD2_0
+        [Theory]
+        [InlineData(PublicKeyHex)]
+        [InlineData(CompressedPublicKeyHex)]
+        public void The_netstandard2_0_build_does_not_encrypt(string publicKeyHex)
+        {
+            // It has no ECDiffieHellman, so even a usable key is ignored, with a reason to log.
+            Assert.Null(ValueEncryptor.TryCreate(publicKeyHex, out var error));
+            Assert.Contains(".NET 8", error);
+        }
+#else
         [Theory]
         [InlineData(PublicKeyHex)]
         [InlineData(CompressedPublicKeyHex)]
@@ -79,6 +90,7 @@ namespace Avo.Inspector.Tests
             var encryptor = ValueEncryptor.TryCreate(PublicKeyHex, out _)!;
             Assert.NotEqual(encryptor.Encrypt("1"), encryptor.Encrypt("1"));
         }
+#endif
 
         [Theory]
         [InlineData("")]

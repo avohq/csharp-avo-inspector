@@ -37,7 +37,9 @@ jobs:
         run: dotnet restore AvoInspector.sln
 
       - name: Test (gate the release)
-        run: dotnet test tests/AvoInspector.Tests/AvoInspector.Tests.csproj -c Release
+        run: |
+          dotnet test tests/AvoInspector.Tests/AvoInspector.Tests.csproj -c Release
+          dotnet test tests/AvoInspector.Tests.NetStandard/AvoInspector.Tests.NetStandard.csproj -c Release
 
       - name: Pack (deterministic; produces .nupkg + .snupkg)
         run: dotnet pack src/AvoInspector/AvoInspector.csproj -c Release -o artifacts
