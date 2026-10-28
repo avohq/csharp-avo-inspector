@@ -440,7 +440,7 @@ namespace Avo.Inspector
             try
             {
                 var validating = ValidateAsync(
-                    eventName, resolvedStreamId, eventSchema, eventProperties, outputReference, originHint);
+                    eventName, resolvedStreamId, eventSchema, eventProperties, outputReference, originHint, giveUp);
                 var validation = await Task.WhenAny(validating, giveUp).ConfigureAwait(false) == validating
                     ? await validating.ConfigureAwait(false)
                     : null;
@@ -574,6 +574,8 @@ namespace Avo.Inspector
                 await WaitAtMost(allEnqueued, graceMs).ConfigureAwait(false);
                 if (!allEnqueued.IsCompleted)
                 {
+                    Logger.Error(_shouldLog, "Flush: sending " + validations.Count(t => !t.IsCompleted)
+                        + " event(s) without waiting for their event spec.");
                     TaskCompletionSource<bool> giveUp;
                     lock (_lock)
                     {
@@ -783,7 +785,8 @@ namespace Avo.Inspector
             IReadOnlyList<SchemaEntry> eventSchema,
             IDictionary<string, object?>? eventProperties,
             string? rawOutputReference,
-            string? rawOriginHint)
+            string? rawOriginHint,
+            Task giveUp)
         {
             try
             {
@@ -837,7 +840,9 @@ namespace Avo.Inspector
                     spec = fetched.Spec;
                 }
 
-                if (spec == null || spec.Events.Count == 0)
+                // Flush already sent the event without validation: validating and logging the
+                // result now would report failures the Debugger never gets.
+                if (spec == null || spec.Events.Count == 0 || giveUp.IsCompleted)
                 {
                     return null;
                 }

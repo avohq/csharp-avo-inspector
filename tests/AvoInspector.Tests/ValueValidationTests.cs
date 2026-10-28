@@ -307,6 +307,34 @@ namespace Avo.Inspector.Tests
         }
 
         [Fact]
+        public async Task Flush_logs_the_events_it_sends_unvalidated_and_not_their_late_result()
+        {
+            using var server = new TestInspectorServer();
+            server.ConfigureSpec(200, PlanSpec, delayMs: 1_500);
+            using (new MockEndpointScope(server.BaseUrl))
+            using (var console = new ConsoleErrorScope())
+            {
+                var inspector = Staging(batchSize: 30);
+                inspector.EnableLogging(true);
+                try
+                {
+                    var track = inspector.TrackSchemaFromEvent("Upgrade", Props.Of(("plan", "Enterprise")), null);
+                    await inspector.Flush(1_000);
+                    Assert.Contains("sending 1 event(s) without waiting for their event spec", console.Output);
+
+                    await track;
+                    await Task.Delay(1_500); // the fetch completes after the event went out
+                    Assert.DoesNotContain("Validated \"Upgrade\"", console.Output);
+                }
+                finally
+                {
+                    inspector.EnableLogging(false);
+                    inspector.Destroy();
+                }
+            }
+        }
+
+        [Fact]
         public async Task An_event_is_timestamped_when_tracked_not_after_its_spec_fetch()
         {
             using var server = new TestInspectorServer();
