@@ -70,11 +70,15 @@ public AvoInspector(string apiKey, string env, string version, string? appName =
 
 - The options overload throws `ArgumentNullException` on a null `options`, then maps `Env` via its
   enum→wire string.
-- `apiKey` is **stored verbatim** (SPEC.md §4.1, §7.2; AVO-3827), as in the Node, Java and Go
-  SDKs, so the `api-key` header and the `apiKey` body copy carry exactly what the caller passed.
-  1.1.x trimmed it; a key pasted with a trailing newline now fails at construction instead.
-  **A CR, LF or NUL anywhere in the key is fatal:** SPEC.md §4.1 requires the constructor to throw
-  `ArgumentException` with the exact message
+- `apiKey` is **trimmed before validation and only the trimmed value is stored**, so every use site
+  — the `api-key` header and the `apiKey` body copy alike — sees one identical value. An Inspector
+  API key is a token, so surrounding whitespace is never significant; trimming cannot invalidate a
+  working key, and it turns a key pasted with a trailing newline from total silent telemetry loss
+  (it would fail the §7.2 header guard on every send) into a working integration. It costs no
+  security, because `Trim` strips only surrounding whitespace: it repairs exactly the accident — a
+  trailing CR or LF with nothing after it — while a control character with content on both sides
+  survives it, and NUL survives anywhere since NUL is not whitespace. **Whatever survives is fatal:**
+  SPEC.md §4.1 requires the constructor to throw `ArgumentException` with the exact message
   `"[Avo Inspector] API key contains a control character. The API key is sent as a request header
   and cannot contain CR, LF, or NUL."`, checked with `InspectorHttpSender.IsSafeHeaderValue` so the
   constructor and the sender can never disagree. The check runs after the emptiness check, so a
@@ -164,7 +168,7 @@ flush trigger fires.
 
 An extension beyond the server SDK spec, ported from `node-avo-inspector` 2.0.0.
 
-- **Construction.** Outside `prod` the instance creates an `EventSpecFetcher` (with the
+- **Construction.** Outside `prod` the instance creates an `EventSpecFetcher` (with the trimmed
   `apiKey`) and an `EventSpecCache`. `PublicEncryptionKey` (options constructor only; the string
   constructor passes `null`) is used only outside `prod`: normalized like a gateway hint and parsed
   into a `ValueEncryptor`, and sent on every body as `publicEncryptionKey` only when that succeeds.

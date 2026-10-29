@@ -301,7 +301,7 @@ may be suspended between invocations or leak across warm-container reuse.
 
 | Option | Type | Required | Default | Notes |
 |---|---|---|---|---|
-| `ApiKey` | string | **yes** | — | Used verbatim. Non-empty / non-whitespace and free of CR, LF and NUL, else the constructor throws. |
+| `ApiKey` | string | **yes** | — | Trimmed. Non-empty / non-whitespace and free of CR, LF and NUL after trimming, else the constructor throws. |
 | `Env` | `AvoInspectorEnv` / string | **yes** | `Dev` (on invalid string) | `Dev` / `Staging` / `Prod`. Controls logging defaults. |
 | `Version` | string | **yes** | — | Non-empty / non-whitespace, else the constructor throws. |
 | `AppName` | string | no | `""` | |
@@ -312,8 +312,8 @@ may be suspended between invocations or leak across warm-container reuse.
 | `PublicEncryptionKey` | string | no | — | Hex P-256 public key. In `Dev`/`Staging`, values are sent encrypted for the Inspector Debugger. Options constructor only. See [Value checks](#value-checks-dev-and-staging). |
 
 The constructor throws synchronously (an `ArgumentException`) for a missing/whitespace
-`ApiKey` or `Version`, or an `ApiKey` containing CR, LF or NUL. The key is not trimmed, so
-strip a trailing newline from a key read from a file or secret store. An invalid or absent `env` string **never throws** — it falls
+`ApiKey` or `Version`, or an `ApiKey` that still contains CR, LF or NUL after trimming (a
+trailing newline from a file or secret store is trimmed away). An invalid or absent `env` string **never throws** — it falls
 back to `Dev` with a warning.
 
 ### `Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(string eventName, IDictionary<string, object?>? eventProperties, string? streamId)`
