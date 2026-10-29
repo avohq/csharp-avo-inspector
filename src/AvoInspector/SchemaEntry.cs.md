@@ -37,3 +37,9 @@ Constructors:
 - **IMPORTANT:** `Children` is non-`null` (possibly empty) **iff** `PropertyType` is `"object"` or any
   `list(...)` type; it is `null` for all primitive scalar types. The converter omits `children` from
   JSON exactly when it is `null`.
+
+**Wire-only fields (AVO-4069).** Two `internal` properties, invisible to SDK consumers:
+`List<string>? FailedEventIds` and `string? EncryptedPropertyValue`, both `null` by default. They
+are set only on the deep copy of the schema that `AvoInspector` sends in dev and staging (failed
+value checks; encrypted value), never on the schema returned to the caller, and the converter writes
+them only when non-`null`.

@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Runs the AvoInspector.Tests suite against the netstandard2.0 build of the SDK, the one an
+    app on .NET Framework, .NET 6 or .NET 7 loads. The tests still run on net8.0; only the SDK
+    assembly differs (backtracking regex engine, no encryption, no DateOnly/TimeOnly).
+    Tests whose expectations differ between the two builds check INSPECTOR_NETSTANDARD2_0.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Avo.Inspector.Tests</RootNamespace>
+    <!-- Same name as the net8.0 suite so the SDK's InternalsVisibleTo covers it. -->
+    <AssemblyName>AvoInspector.Tests</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <DefineConstants>$(DefineConstants);INSPECTOR_NETSTANDARD2_0</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AvoInspector\AvoInspector.csproj"
+                      SetTargetFramework="TargetFramework=netstandard2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\AvoInspector.Tests\**\*.cs" Exclude="..\AvoInspector.Tests\obj\**;..\AvoInspector.Tests\bin\**" />
+    <Compile Include="..\..\conformance\AvoInspector.Conformance\JsonInterop.cs" Link="JsonInterop.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\conformance\fixtures\schema-extraction\fixtures.json"
+          Link="fixtures\schema-extraction.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

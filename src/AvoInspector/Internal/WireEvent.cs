@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
+using Avo.Inspector.Internal.EventSpec;
 
 namespace Avo.Inspector.Internal
 {
@@ -58,5 +59,16 @@ namespace Avo.Inspector.Internal
         [JsonPropertyName("originHint")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public string? OriginHint { get; set; }
+
+        // Event spec validation and value encryption (dev and staging; AVO-4069), the same keys the
+        // Node SDK sends. Omitted when absent, so an instance without validation or an encryption
+        // key sends the 1.1.x body unchanged.
+        [JsonPropertyName("eventSpecMetadata")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public EventSpecMetadata? EventSpecMetadata { get; set; }
+
+        [JsonPropertyName("publicEncryptionKey")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? PublicEncryptionKey { get; set; }
     }
 }

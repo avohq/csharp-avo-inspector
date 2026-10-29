@@ -7,8 +7,10 @@ namespace Avo.Inspector.Internal
 {
     /// <summary>
     /// Serializes a <see cref="SchemaEntry"/> to the exact Inspector wire shape (SPEC.md §7.3.4):
-    /// <c>{ "propertyName", "propertyType", "children"? }</c> with <c>children</c> omitted when
-    /// <see cref="SchemaEntry.Children"/> is <c>null</c>. The heterogeneous <c>children</c> union
+    /// <c>{ "propertyName", "propertyType", "encryptedPropertyValue"?, "children"?, "failedEventIds"? }</c>
+    /// with each optional key omitted when its value is <c>null</c>. The two wire-only keys are only
+    /// ever set on the copy of the schema sent in dev and staging, so a schema without them
+    /// serializes exactly as in 1.1.x. The heterogeneous <c>children</c> union
     /// (type strings, nested <see cref="SchemaEntry"/> objects, nested arrays) is written
     /// recursively. This converter is write-only; deserialization is not supported.
     /// </summary>
@@ -25,10 +27,23 @@ namespace Avo.Inspector.Internal
             writer.WriteStartObject();
             writer.WriteString("propertyName", entry.PropertyName);
             writer.WriteString("propertyType", entry.PropertyType);
+            if (entry.EncryptedPropertyValue != null)
+            {
+                writer.WriteString("encryptedPropertyValue", entry.EncryptedPropertyValue);
+            }
             if (entry.Children != null)
             {
                 writer.WritePropertyName("children");
                 WriteValue(writer, entry.Children);
+            }
+            if (entry.FailedEventIds != null)
+            {
+                writer.WriteStartArray("failedEventIds");
+                foreach (var id in entry.FailedEventIds)
+                {
+                    writer.WriteStringValue(id);
+                }
+                writer.WriteEndArray();
             }
             writer.WriteEndObject();
         }

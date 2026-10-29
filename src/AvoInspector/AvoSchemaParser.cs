@@ -193,11 +193,11 @@ namespace Avo.Inspector
         /// <see cref="System.Collections.IDictionary"/>. Without this, a non-<c>object?</c> map would
         /// fall through to the array branch and serialize as a list of <c>KeyValuePair</c> entries.
         /// </summary>
-        private static bool IsObjectMap(object? value)
+        internal static bool IsObjectMap(object? value)
             => value is IDictionary<string, object?> || value is System.Collections.IDictionary;
 
         /// <summary>Enumerates a map's entries as string-keyed pairs (see <see cref="IsObjectMap"/>).</summary>
-        private static IEnumerable<KeyValuePair<string, object?>> EnumerateMap(object map)
+        internal static IEnumerable<KeyValuePair<string, object?>> EnumerateMap(object map)
         {
             if (map is IDictionary<string, object?> typed)
             {

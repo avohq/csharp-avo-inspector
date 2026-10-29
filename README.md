@@ -14,6 +14,9 @@ storage. All state is in memory.
   wire-protocol, error-handling, batching) — see [Conformance](#conformance).
 - ✅ Thread-safe; safe for concurrent use on multi-threaded servers.
 - ✅ Batching with size + time/idle flush triggers, bounded queue, and gzip.
+- ✅ In `dev` and `staging`: property values are checked against your tracking plan
+  (allowed values, pinned values, regex, min/max), and can be sent encrypted so the
+  Inspector Debugger shows them — see [Value checks](#value-checks-dev-and-staging).
 - ✅ Multi-targets `netstandard2.0` and `net8.0` (works on .NET Framework 4.6.2+,
   .NET Core, .NET 5–8, Mono, Unity). The `4.6.2` floor on .NET Framework is imposed by
   the `System.Text.Json` 8.0.x dependency.
@@ -95,7 +98,17 @@ dotnet run --project examples/AvoInspector.Example -- --live  # send to the real
 dotnet run --project examples/AvoInspector.Example -- --help
 ```
 
-For `--live`, set `AVO_INSPECTOR_API_KEY` (and optionally `AVO_INSPECTOR_ENV=dev|staging|prod`).
+For `--live`, set `AVO_INSPECTOR_API_KEY` (and optionally `AVO_INSPECTOR_ENV=dev|staging|prod`,
+and `AVO_INSPECTOR_PUBLIC_ENCRYPTION_KEY` to send values encrypted). To send one event of your
+own, for example to see value checks against your tracking plan in the Inspector Debugger:
+
+```sh
+dotnet run --project examples/AvoInspector.Example -- --live \
+  --event "Sign Up" --props '{"plan":"Enterprise","seats":0}' \
+  [--stream-id ID] [--origin-hint HINT] [--output-reference REF]
+```
+
+The example builds against this checkout, not the published package.
 
 ---
 
@@ -171,6 +184,83 @@ stores a `null` `appVersion` as `"unversioned"`. The SDK logs nothing about it.
 
 ---
 
+## Value checks (dev and staging)
+
+In `Dev` and `Staging`, the SDK checks each event's property **values** against the event
+in your tracking plan, as the web, Node and mobile SDKs do. Before sending an event it
+fetches the event's spec from Avo (`GET https://api.avo.app/trackingPlan/eventSpec`), then
+checks every value constraint the spec sets:
+
+- **allowed values** — the value must be one of the property's allowed values;
+- **pinned values** — the value must equal the pinned value;
+- **regex** — a string value must match the pattern;
+- **min/max** — a number must be within the range (either bound may be open).
+
+Constraints are checked on each property and on the properties of an object, or of each
+object in a list (one level deep). Each constraint belongs to the tracking-plan event or
+variant that sets it, so a value can fail for one variant and pass for another. Failures
+show up as value issues in the Inspector Debugger. Types are not checked here: Avo
+compares the reported schema with the tracking plan for that.
+
+```csharp
+var inspector = new AvoInspector(new AvoInspectorOptions
+{
+    ApiKey  = "my-inspector-api-key",
+    Env     = AvoInspectorEnv.Staging,
+    Version = "1.4.2",
+    // Optional: lets the Debugger show the values themselves (see below).
+    PublicEncryptionKey = "04a1b2…",
+});
+
+// "Enterprise" is not one of the plan's allowed values: the Debugger shows a value issue.
+await inspector.TrackSchemaFromEvent("Plan Upgraded",
+    new Dictionary<string, object?> { ["plan"] = "Enterprise" });
+```
+
+**Gateways.** With `originHint` (and `outputReference`), the spec fetch carries them too, so
+a gateway key is checked against the event as expected at that checkpoint: the gateway
+input with `originHint` alone, or that output with both. Each checkpoint's spec is cached
+on its own. A gateway key has no spec without `originHint`; such events are sent without
+value checks.
+
+**It never drops an event; the first track of an event waits for its spec.** A spec is cached for 60 seconds (or 50 events) per
+event name, stream id and checkpoint, and concurrent tracks of the same event share one
+fetch. If the fetch fails, times out (10 seconds), or Avo has no spec for the event, the
+event is sent without value checks, as before; a failed fetch is retried after 5 seconds
+(60 for a 404). The first track of an event therefore waits for its spec fetch, unless 1,000
+events are already waiting for one across the process: then it is sent without value checks
+straight away.
+`Flush()` gives tracks still waiting on a spec up to 1 second (at most half its timeout) and
+then sends them without value checks, so a slow spec endpoint cannot hold up a flush before
+exit. Checks are bounded:
+a list of more than 1,000 items, or a string of more than 10,000 characters against a
+regex, is not checked. On .NET 8 and later (the SDK's `net8.0` build), regex patterns run
+on .NET's linear-time engine (`RegexOptions.NonBacktracking`), which cannot backtrack
+catastrophically. Patterns that engine cannot run (lookarounds, backreferences, `\b`), and
+every pattern in the `netstandard2.0` build (.NET Framework, .NET 6 and 7), use the
+backtracking engine. Each regex match has a 100 ms budget, and a
+pattern that runs out is skipped from then on.
+
+**`Prod` is unchanged:** no spec fetch, no value checks, no values sent, and no
+`publicEncryptionKey` on the body.
+
+### Showing values in the Debugger: `PublicEncryptionKey`
+
+Without `PublicEncryptionKey`, no property values ever leave your service — only names,
+types and which checks failed. With it, in `Dev` and `Staging`, each property's value is
+encrypted with that key (ECIES on P-256 with AES-256-GCM, the same format as the web and
+Node SDKs) and sent as `encryptedPropertyValue`; only the holder of the matching private
+key, in the Inspector Debugger, can read it. An object's value is encrypted as its JSON; a
+list's value is not sent. Copy the public key from your Avo workspace (66 or 130 hex
+characters). A key that cannot be used is reported once on stderr at construction, and
+events are then sent without values and without the key.
+
+Encryption needs **.NET 8 or later** (the SDK's `net8.0` build): `netstandard2.0` has no
+elliptic-curve Diffie-Hellman. On .NET Framework or .NET 6/7 the key is ignored with a
+warning at construction; value checks still run.
+
+---
+
 ## ⚠️ Shutdown contract — you MUST flush before exit
 
 Buffered and in-flight events are held **in memory only** and are delivered
@@ -211,7 +301,7 @@ may be suspended between invocations or leak across warm-container reuse.
 
 | Option | Type | Required | Default | Notes |
 |---|---|---|---|---|
-| `ApiKey` | string | **yes** | — | Non-empty / non-whitespace, else the constructor throws. |
+| `ApiKey` | string | **yes** | — | Used verbatim. Non-empty / non-whitespace and free of CR, LF and NUL, else the constructor throws. |
 | `Env` | `AvoInspectorEnv` / string | **yes** | `Dev` (on invalid string) | `Dev` / `Staging` / `Prod`. Controls logging defaults. |
 | `Version` | string | **yes** | — | Non-empty / non-whitespace, else the constructor throws. |
 | `AppName` | string | no | `""` | |
@@ -219,9 +309,11 @@ may be suspended between invocations or leak across warm-container reuse.
 | `BatchFlushSeconds` | double | no | `30` | Max age of the oldest buffered event before a scheduled flush. |
 | `MaxQueueSize` | int | no | `1000` | Hard cap; oldest events dropped first (FIFO) on overflow. |
 | `DisableBatchTimer` | bool | no | `false` | Disable the background scheduled-flush timer. |
+| `PublicEncryptionKey` | string | no | — | Hex P-256 public key. In `Dev`/`Staging`, values are sent encrypted for the Inspector Debugger. Options constructor only. See [Value checks](#value-checks-dev-and-staging). |
 
 The constructor throws synchronously (an `ArgumentException`) for a missing/whitespace
-`ApiKey` or `Version`. An invalid or absent `env` string **never throws** — it falls
+`ApiKey` or `Version`, or an `ApiKey` containing CR, LF or NUL. The key is not trimmed, so
+strip a trailing newline from a key read from a file or secret store. An invalid or absent `env` string **never throws** — it falls
 back to `Dev` with a warning.
 
 ### `Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(string eventName, IDictionary<string, object?>? eventProperties, string? streamId)`
@@ -364,6 +456,16 @@ a `Prod` instance ignores it unconditionally, so production traffic can never be
 > omitted entirely when not provided, so a call that supplies none of the three coordinates
 > produces a body with exactly the 1.0.0 key set and values — only `libVersion` differs. See
 > [Gateways](#gateways).
+>
+> **Value checks (since 1.2.0, `dev` and `staging` only).** A validated event carries
+> `eventSpecMetadata` (`schemaId`, `branchId`, `latestActionId`, `sourceId`), and each property
+> that failed a value check carries `failedEventIds` (on the property, or on its children
+> for an object or list of objects); these need a spec. With a usable `PublicEncryptionKey`,
+> the body carries `publicEncryptionKey`, and each property that is not a list carries
+> `encryptedPropertyValue` unless its value could not be encrypted; this does not
+> depend on a spec. With neither a spec nor a usable key, the body is exactly
+> the 1.1.x one. See
+> [Value checks](#value-checks-dev-and-staging).
 
 ---
 
@@ -409,7 +511,15 @@ The vendored fixtures under `conformance/fixtures/` (a byte-identical snapshot o
 suite) also back a self-contained `dotnet test` run.
 
 ```sh
-dotnet test       # unit tests + the 13 schema-extraction golden fixtures
+dotnet test       # unit tests + the 13 schema-extraction golden fixtures, against both builds
+```
+
+`AvoInspector.Tests.NetStandard` runs the same tests against the `netstandard2.0` build (the one
+.NET Framework, .NET 6 and .NET 7 apps load), on the .NET 8 runtime. Tests whose result differs
+by build, such as encryption and the linear-time regex engine, check `INSPECTOR_NETSTANDARD2_0`.
+
+```sh
+dotnet test tests/AvoInspector.Tests.NetStandard/AvoInspector.Tests.NetStandard.csproj
 ```
 
 ---
@@ -459,6 +569,7 @@ manager, not in the repo.
 
    ```sh
    dotnet test tests/AvoInspector.Tests/AvoInspector.Tests.csproj -c Release
+   dotnet test tests/AvoInspector.Tests.NetStandard/AvoInspector.Tests.NetStandard.csproj -c Release
    ./scripts/run-conformance.sh          # see SPEC_REF in the script header
    ```
 

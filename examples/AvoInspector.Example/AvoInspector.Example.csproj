@@ -11,8 +11,9 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
+  <!-- Builds against this checkout, so the example always shows the SDK it ships with. -->
   <ItemGroup>
-    <PackageReference Include="AvoInspector" Version="1.0.0" />
+    <ProjectReference Include="../../src/AvoInspector/AvoInspector.csproj" />
   </ItemGroup>
 
 </Project>

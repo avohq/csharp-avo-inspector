@@ -1,5 +1,7 @@
 ---
-import: src/AvoInspector/SchemaEntry.cs.md
+import:
+src/AvoInspector/SchemaEntry.cs.md
+src/AvoInspector/Internal/EventSpec/EventSpecTypes.cs.md
 ---
 
 ## Short description
@@ -33,6 +35,11 @@ Internal C# class in namespace `Avo.Inspector.Internal`. Serialized with `System
   `null` (SPEC.md §7.3.6)
 - `string? OriginHint` → `originHint` — same nullable/`[JsonIgnore(WhenWritingNull)]` shape as
   `OutputReference`
+- `EventSpecMetadata? EventSpecMetadata` → `eventSpecMetadata` — same omitted-when-`null` shape;
+  `{ schemaId, branchId, latestActionId, sourceId }` of the spec a validated event was checked
+  against (dev and staging, AVO-4069)
+- `string? PublicEncryptionKey` → `publicEncryptionKey` — same omitted-when-`null` shape; set when
+  the instance has a public encryption key
 
 Non-nullable string fields default to `string.Empty`. `AppVersion`/`OutputReference`/`OriginHint`
 default to `null` (no initializer).

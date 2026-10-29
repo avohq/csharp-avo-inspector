@@ -661,8 +661,14 @@ namespace Avo.Inspector.Tests
                             outputReference: "meta-x7k2q", originHint: "web");
                     }
 
-                    // Nothing at all on stderr, and in particular no trace of the retired warning.
-                    Assert.Equal(string.Empty, console.Output);
+                    // Nothing on stderr but the event spec fetch diagnostics a dev instance prints
+                    // since 1.2.0 (the mock answers the fetch with a 404), and in particular no
+                    // trace of the retired warning.
+                    var otherLines = console.Output
+                        .Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                        .Where(line => line.IndexOf("Event spec", StringComparison.Ordinal) < 0);
+                    Assert.Empty(otherLines);
+                    Assert.DoesNotContain("appVersion", console.Output);
 
                     // ... and the appVersion still resolves to a literal JSON null on the wire.
                     Assert.Equal(JsonValueKind.Null, FirstEvent(server).GetProperty("appVersion").ValueKind);

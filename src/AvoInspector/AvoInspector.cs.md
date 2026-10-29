@@ -10,6 +10,12 @@ src/AvoInspector/Internal/WireEvent.cs.md
 src/AvoInspector/Internal/InspectorHttpSender.cs.md
 src/AvoInspector/Internal/Logger.cs.md
 src/AvoInspector/Internal/ThreadSafeRandom.cs.md
+src/AvoInspector/Internal/RawValues.cs.md
+src/AvoInspector/Internal/ValueEncryptor.cs.md
+src/AvoInspector/Internal/EventSpec/EventSpecTypes.cs.md
+src/AvoInspector/Internal/EventSpec/EventSpecFetcher.cs.md
+src/AvoInspector/Internal/EventSpec/EventSpecCache.cs.md
+src/AvoInspector/Internal/EventSpec/EventValidator.cs.md
 ---
 
 ## Short description
@@ -64,15 +70,11 @@ public AvoInspector(string apiKey, string env, string version, string? appName =
 
 - The options overload throws `ArgumentNullException` on a null `options`, then maps `Env` via its
   enum→wire string.
-- `apiKey` is **trimmed before validation and only the trimmed value is stored**, so every use site
-  — the `api-key` header and the `apiKey` body copy alike — sees one identical value. An Inspector
-  API key is a token, so surrounding whitespace is never significant; trimming cannot invalidate a
-  working key, and it turns a key pasted with a trailing newline from total silent telemetry loss
-  (it would fail the §7.2 header guard on every send) into a working integration. It costs no
-  security, because `Trim` strips only surrounding whitespace: it repairs exactly the accident — a
-  trailing CR or LF with nothing after it — while a control character with content on both sides
-  survives it, and NUL survives anywhere since NUL is not whitespace. **Whatever survives is fatal:**
-  SPEC.md §4.1 requires the constructor to throw `ArgumentException` with the exact message
+- `apiKey` is **stored verbatim** (SPEC.md §4.1, §7.2; AVO-3827), as in the Node, Java and Go
+  SDKs, so the `api-key` header and the `apiKey` body copy carry exactly what the caller passed.
+  1.1.x trimmed it; a key pasted with a trailing newline now fails at construction instead.
+  **A CR, LF or NUL anywhere in the key is fatal:** SPEC.md §4.1 requires the constructor to throw
+  `ArgumentException` with the exact message
   `"[Avo Inspector] API key contains a control character. The API key is sent as a request header
   and cannot contain CR, LF, or NUL."`, checked with `InspectorHttpSender.IsSafeHeaderValue` so the
   constructor and the sender can never disagree. The check runs after the emptiness check, so a
@@ -127,8 +129,9 @@ public Task<IReadOnlyList<SchemaEntry>> TrackSchemaFromEvent(
     string? outputReference = null, string? originHint = null, string? originAppVersion = null)
 ```
 
-Pipeline: extract schema → resolve stream id → apply per-event sampling → enqueue into the pending
-batch → dispatch a send when a flush trigger fires.
+Pipeline: extract schema → resolve stream id → apply per-event sampling → (dev and staging only)
+validate values against the event spec → enqueue into the pending batch → dispatch a send when a
+flush trigger fires.
 
 - **`outputReference` / `originHint` / `originAppVersion` (SPEC.md §4.2.1 / §7.3.6 — the gateway
   track options once drafted as spec v2.1.0; AVO-3516):** top-level optional parameters, the shape
@@ -142,9 +145,10 @@ batch → dispatch a send when a flush trigger fires.
 - **Post-`Destroy` no-op:** resolves with an empty list, no enqueue, no HTTP call. Re-checked again
   under the lock right before enqueue to handle a mid-flight `Destroy`.
 - **Sampling (SPEC.md §7.7):** snapshots the current rate under the lock and drops the event (returns
-  the extracted schema, unsent) when `ThreadSafeRandom.NextDouble() >= samplingRate`. The `>=`
-  comparison guarantees `samplingRate == 0.0` **always** drops. Sampling is applied at enqueue,
-  before buffering.
+  the extracted schema, unsent) when `ThreadSafeRandom.NextDouble() > samplingRate`, through
+  `internal static bool IsSampledOut(double random, double samplingRate)`. A draw equal to the rate
+  is kept, as in the Node, Java and Go SDKs; at `samplingRate == 0.0` every non-zero draw drops.
+  Sampling is applied at enqueue, before buffering.
 - **Enqueue & overflow (SPEC.md §12.5):** appends a `WireEvent`; while `count > maxQueueSize`, drops
   the **oldest (FIFO)** entries and logs a **count only** (never event contents).
 - **Size trigger (SPEC.md §12.3/§12.4):** when `count >= effectiveBatchSize`, the batch is swapped
@@ -156,6 +160,52 @@ batch → dispatch a send when a flush trigger fires.
 - **Failure (SPEC.md §4.2.5):** a synchronous internal error before enqueue logs the error type name
   and faults the task with `AvoInspectorTrackException` (never the original exception).
 
+### Event spec validation and value encryption (dev and staging; AVO-4069)
+
+An extension beyond the server SDK spec, ported from `node-avo-inspector` 2.0.0.
+
+- **Construction.** Outside `prod` the instance creates an `EventSpecFetcher` (with the
+  `apiKey`) and an `EventSpecCache`. `PublicEncryptionKey` (options constructor only; the string
+  constructor passes `null`) is used only outside `prod`: normalized like a gateway hint and parsed
+  into a `ValueEncryptor`, and sent on every body as `publicEncryptionKey` only when that succeeds.
+  A `prod` body never carries it. A key that cannot be used logs **one** always-on warning naming
+  the fault (never the key), and neither values nor the key are sent.
+  In `prod` neither the fetcher, the cache nor the encryptor exists.
+- **Validation step.** Runs after sampling (a sampled-out event never fetches). `ValidateAsync`
+  never throws: it returns `null` (send without validation) on no spec base URL, a cached failure, a
+  failed or abandoned fetch, a spec with no events, or any exception (logging the exception type
+  only). Spec base URL: `https://api.avo.app`, or the scheme and authority of
+  `AVO_INSPECTOR_MOCK_ENDPOINT` when set (an override that is not an absolute http(s) URL disables
+  validation rather than falling back to production).
+- **Gateway coordinates.** `originHint` and `outputReference` are normalized with `NormalizeHint`
+  (the same values as on the body) and passed to the fetch and the cache key.
+- **Cache.** Key `EventSpecCache.MakeKey(streamId, eventName, originHint, outputReference)`. A hit
+  with `null` (cached failure) skips validation. On a miss, at most `MaxWaitingValidations` (1,000)
+  events wait for a fetch at once, process-wide (`Interlocked` counter); beyond that the event is
+  sent unvalidated. Fetch outcome → cache: `Ok` → the spec for 60 s; `NotFound` → `null` for 60 s;
+  `Failed` → `null` for 5 s; `Abandoned` → nothing.
+- **Flush tracking.** Each validating track registers a `TaskCompletionSource` in
+  `_pendingValidations` and completes it in a `finally` after `EnqueueAsync` has enqueued and
+  dispatched synchronously, so `Flush` sees the event either in the batch or in `_pendingSends`.
+  `Flush` waits for them at most `ValidationGraceMs` (1,000 ms, capped at half its timeout; 1,000 ms
+  for `Timeout.Infinite`). Past that it completes `_giveUpValidations` (and replaces it, so later
+  tracks wait as usual): each track captured that signal when it registered and races it against
+  `ValidateAsync`, so it enqueues without validation at once. Under the same lock as the swap,
+  `Flush` snapshots `_pendingValidations` again, so a track that registered during the grace (and
+  so holds the old signal) is waited for too; it logs how many. The fetch
+  carries on and fills the cache, but `ValidateAsync` (which also gets the signal) then skips
+  validating and logging that event's result. `Flush` then waits for the enqueues and the sends within the rest of its timeout.
+- **Timestamp.** `createdAt` is taken at the start of `TrackSchemaFromEvent`, before sampling and
+  the spec fetch, and passed through `EnqueueAsync` to `BuildWireEvent`.
+- **Body.** `BuildWireEvent` takes the raw properties and the `EventValidationResult?`. When either a
+  result or an encryptor (with non-null properties) is present it deep-copies the schema (the
+  resolved schema never carries wire-only fields), encrypts top-level values into
+  `EncryptedPropertyValue` (not for `list(…)` types; JSON of the value via `RawValues.ToJson`; a
+  failure logs the property name and error type and leaves the property without a value), then
+  applies each failed property's outcome: `FailedEventIds` on the entry, and child outcomes on
+  matching child entries, recursing through nested lists (each element schema of a list of objects
+  gets them). `eventSpecMetadata` is set from the result. Otherwise the schema is sent as is.
+
 ### Stream id resolution (internal contract, SPEC.md §4.2/§8.2)
 
 A non-empty `streamId` is used **verbatim**; if it contains `':'` a warning is logged (without the
@@ -165,7 +215,7 @@ value). An absent or empty `streamId` becomes `""`.
 
 Each event becomes a `WireEvent` carrying: `apiKey`, `appName`, `appVersion`,
 `libVersion`/`libPlatform` (from `InspectorVersion`), `env` wire string, a fresh lowercase UUID v4
-`messageId`, `streamId`, a UTC `createdAt` formatted `yyyy-MM-dd'T'HH:mm:ss.fff'Z'` (invariant
+`messageId`, `streamId`, a UTC `createdAt` (the time of the track call) formatted `yyyy-MM-dd'T'HH:mm:ss.fff'Z'` (invariant
 culture), the sampling-rate snapshot, `type = "event"`, the event name (null → `""`), and the
 extracted schema as `eventProperties` — plus, since this SDK's 1.1.0, the gateway coordinate fields
 below (SPEC.md §7.3.6; AVO-3516).
@@ -202,8 +252,9 @@ were removed with the endpoint move.
 public Task Flush(int timeoutMs = 10_000)
 ```
 
-Force-flushes the pending batch (if any), then waits up to `timeoutMs` for all tracked in-flight
-sends to complete or be abandoned. **Always resolves — a completion guarantee, not a delivery
+First waits (up to `timeoutMs`) for tracks still waiting on an event spec to enqueue their events,
+then force-flushes the pending batch (if any), then waits for the rest of `timeoutMs` for all
+tracked in-flight sends to complete or be abandoned. **Always resolves — a completion guarantee, not a delivery
 guarantee** (SPEC.md §4.6); resolves even if a send faulted or the timeout elapses. A no-op after
 `Destroy`. The instance remains usable afterward.
 
@@ -214,8 +265,10 @@ public void Destroy()
 ```
 
 Cancels and cleans up (SPEC.md §4.5, §11.3): marks destroyed, discards the pending batch **unsent**,
-clears the in-flight tracking set (pending count → 0), disposes and clears the flush timer, and
-cancels the shared `CancellationToken` to abort any in-flight HTTP send. **Does NOT flush.**
+clears the in-flight and pending-validation tracking sets (pending count → 0), disposes and clears
+the flush timer, clears the event spec cache, and cancels the shared `CancellationToken` to abort
+any in-flight HTTP send or event spec fetch (a track waiting on one then resolves with an empty
+list). **Does NOT flush.**
 Constructor options, the sampling rate, and the process-wide logging flag persist. After `Destroy`,
 `TrackSchemaFromEvent` is a no-op.
 
@@ -237,6 +290,7 @@ Constructor options, the sampling rate, and the process-wide logging flag persis
 
 <!-- The class also exposes a small set of `internal` test-only hooks
 (SetSamplingRateForTesting, CurrentSamplingRate, IsDestroyed, EffectiveBatchSize,
-PendingBatchCount, ResolvedEndpointForTesting, ShouldLogForTesting). These are deliberately NOT part
+PendingBatchCount, ResolvedEndpointForTesting, ShouldLogForTesting, IsValidationActiveForTesting,
+IsEncryptionActiveForTesting, BuildWireEventForTesting). These are deliberately NOT part
 of the public API; the sampling-rate setter is internal specifically so external callers cannot force
 samplingRate = 0 and silently disable telemetry. -->

@@ -136,21 +136,14 @@ namespace Avo.Inspector.Tests
         }
 
         /// <summary>
-        /// A key pasted with surrounding whitespace — a trailing newline is the classic one — is
-        /// repaired, not rejected. The constructor trims once and stores only the trimmed value, so
-        /// the <c>api-key</c> header and the body's <c>apiKey</c> copy carry the identical trimmed
-        /// token; the conformance runner asserts that agreement. Without the trim this key would
-        /// fail the header guard on every send, which in a sender that never throws at the caller
-        /// means losing all telemetry for the life of the process — silent in prod, where logging is
-        /// off by default. Trimming costs no security: the embedded-control-character cases above
-        /// survive <c>Trim</c> and are still rejected.
+        /// SPEC.md §4.1/§7.2 (AVO-3827): the key is used verbatim, as in the Node, Java and Go SDKs.
+        /// The body's <c>apiKey</c> copy is exactly what the caller passed. HTTP drops the spaces and
+        /// tabs around a header value, so the server reads the header without them.
         /// </summary>
         [Theory]
         [InlineData("  my-inspector-key  ")]
-        [InlineData("my-inspector-key\n")]
-        [InlineData("my-inspector-key\r\n")]
         [InlineData("\tmy-inspector-key\t")]
-        public async Task ApiKey_with_surrounding_whitespace_is_trimmed_in_both_header_and_body(string key)
+        public async Task ApiKey_with_surrounding_spaces_is_sent_verbatim(string key)
         {
             using var server = new TestInspectorServer();
             using (new MockEndpointScope(server.BaseUrl))
@@ -159,26 +152,26 @@ namespace Avo.Inspector.Tests
                 await inspector.TrackSchemaFromEvent("E", Props.Of(("x", 1)), "s1");
                 await inspector.Flush();
 
-                var request = Assert.Single(server.Requests); // it sends, rather than failing closed
+                var request = Assert.Single(server.Requests);
                 Assert.Equal("my-inspector-key", request.Header("api-key"));
 
                 using var doc = JsonDocument.Parse(request.Body);
-                Assert.Equal("my-inspector-key", doc.RootElement[0].GetProperty("apiKey").GetString());
+                Assert.Equal(key, doc.RootElement[0].GetProperty("apiKey").GetString());
             }
         }
 
         /// <summary>
-        /// Trimming does not weaken the guard. <c>Trim</c> strips only surrounding whitespace, so a
-        /// control character with content on both sides survives it, and NUL survives even in
-        /// trailing position because NUL is not whitespace. What survives is fatal: SPEC.md §4.1
-        /// requires the constructor to throw with its exact message, so the mistake is caught at
-        /// configuration time rather than becoming events that never arrive.
+        /// Without trimming, a key pasted with a trailing newline carries a control character, so
+        /// SPEC.md §4.1 makes it fatal at construction with the exact message. 1.1.x trimmed such a
+        /// key and sent it; the throw names the mistake at configuration time instead.
         /// </summary>
         [Theory]
-        [InlineData("  key\r\nX-Injected: 1  ")] // embedded CRLF, whitespace stripped from around it
-        [InlineData("  key\0truncated  ")]       // embedded NUL
-        [InlineData("  key\0  ")]                // trailing NUL: not whitespace, so Trim leaves it
-        public void Trimming_does_not_rescue_a_key_whose_control_character_survives_it(string key)
+        [InlineData("my-inspector-key\n")]
+        [InlineData("my-inspector-key\r\n")]
+        [InlineData("  key\r\nX-Injected: 1  ")]
+        [InlineData("  key\0truncated  ")]
+        [InlineData("  key\0  ")]
+        public void ApiKey_with_a_control_character_throws_even_at_the_end(string key)
         {
             var ex = Assert.Throws<ArgumentException>(
                 () => new AvoInspector(key, "staging", "1.0.0", batchSize: 1));
@@ -190,8 +183,8 @@ namespace Avo.Inspector.Tests
         }
 
         /// <summary>
-        /// SPEC.md §4.1 is unaffected by the trim: a whitespace-only key is still empty after
-        /// trimming, so it still throws with the exact spec message.
+        /// SPEC.md §4.1: a whitespace-only key counts as empty, so it throws the "no API key"
+        /// message, even when the whitespace is a CR or LF.
         /// </summary>
         [Theory]
         [InlineData("   ")]
@@ -225,7 +218,7 @@ namespace Avo.Inspector.Tests
         /// <summary>
         /// The two §4.1 apiKey rejections are distinct and each keeps its own exact message, so a
         /// caller reading the exception learns which mistake they made. Ordering matters: emptiness
-        /// is judged after the trim, so a whitespace-only key is "no API key" and never reaches the
+        /// is checked first, so a whitespace-only key is "no API key" and never reaches the
         /// control-character check.
         /// </summary>
         [Fact]
@@ -315,6 +308,21 @@ namespace Avo.Inspector.Tests
                 await inspector.Flush();
                 Assert.Equal(0, server.RequestCount); // dropped before buffering
             }
+        }
+
+        // SPEC.md §7.7 (AVO-3827): drop only when random > samplingRate, so a draw equal to the
+        // rate is kept, as in the Node, Java and Go SDKs.
+        [Theory]
+        [InlineData(0.5, 0.5, false)]
+        [InlineData(0.25, 0.25, false)]
+        [InlineData(0.0, 0.0, false)]
+        [InlineData(0.5000001, 0.5, true)]
+        [InlineData(0.4999999, 0.5, false)]
+        [InlineData(0.0000001, 0.0, true)]
+        [InlineData(0.9999999, 1.0, false)]
+        public void Sampling_drops_only_when_random_is_above_the_rate(double random, double rate, bool dropped)
+        {
+            Assert.Equal(dropped, AvoInspector.IsSampledOut(random, rate));
         }
 
         [Fact]

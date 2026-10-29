@@ -5,6 +5,68 @@ follows [Semantic Versioning](https://semver.org/). The `libVersion` sent on the
 the SDK library version (`InspectorVersion.LibVersion`), independent of the spec contract
 version it implements (`InspectorVersion.SpecVersion`).
 
+## [Unreleased]
+
+### Added — value checks in `dev` and `staging` (AVO-4069)
+
+Ports the event spec validation of `node-avo-inspector` 2.0.0. `prod` is unchanged: no spec
+fetch, no value checks, no values sent.
+
+- **Property values are checked against the tracking plan.** Before sending an event, a `Dev`
+  or `Staging` instance fetches its spec from `GET /trackingPlan/eventSpec` (`apiKey`,
+  `eventName`, `streamId`) and checks every value against the spec's allowed values, pinned
+  values, regex patterns and min/max ranges, on each property and one level into objects and
+  lists of objects. A value outside a property's allowed values shows up as a value issue in
+  the Inspector Debugger, which showed "Validation didn't run" for every C# source until now.
+- **Every event and variant in the spec is checked.** Each constraint applies to the tracking-plan
+  event and variant IDs that set it, and failures are sent as `failedEventIds` on the property
+  (or its children), with the spec's `eventSpecMetadata` on the event. Like Node 2.0.0, the
+  property type is not compared with the spec (Avo already compares the schema with the plan,
+  and the type names differ), and `passedEventIds` is not sent.
+- **Gateway events are checked at their checkpoint.** `originHint` and `outputReference` are
+  passed to the spec fetch (normalized as on the track body), so a gateway key answers the spec
+  of the gateway input or of that output. Each checkpoint's spec is cached and fetched on its own.
+- **`PublicEncryptionKey` option.** With a hex P-256 public key, `Dev` and `Staging` send each
+  property's value encrypted (ECIES, AES-256-GCM, the web and Node SDKs' format) as
+  `encryptedPropertyValue`, so the Debugger can show decrypted values. A usable key is sent on
+  the body as `publicEncryptionKey` (never in `prod`). Lists' values are not sent; every property stays in the schema.
+  Needs .NET 8 or later (the `net8.0` build); an app on the `netstandard2.0` build (.NET
+  Framework, .NET 6 and 7) gets a warning at construction, and neither values nor the key are sent.
+- **Never drops an event; the first track of an event waits for its spec.** A failed, timed-out (10 s) or missing spec sends the event
+  without validation. Specs are cached per instance for 60 s or 50 uses; a 404 is cached for
+  60 s and any other failure for 5 s; concurrent tracks of one event share one fetch; at most
+  1,000 events wait for a spec at once, across instances; past that, a track is sent without validation instead of waiting. `Flush()` gives tracks still waiting
+  on a spec up to 1 s (at most half its timeout), then sends them without validation, as Node
+  2.0.0 does; `Destroy()` abandons spec fetches. An event's `createdAt` is the time of the
+  track call, before any spec fetch.
+- **A tracking-plan regex cannot hang a track.** On .NET 8 and later (the `net8.0` build),
+  patterns run on the linear-time `RegexOptions.NonBacktracking` engine, as Go (RE2) and Java
+  (RE2J) do, with `\d` and `\w` rewritten to JavaScript's ASCII classes. Patterns that engine
+  cannot run (lookarounds, backreferences, `\b`), and every pattern in the `netstandard2.0`
+  build, use the backtracking engine with JavaScript semantics. On both engines `$` matches
+  only at the end of the value and `.` does not match line terminators, as in JavaScript. Every match has a 100 ms budget, and a pattern
+  that runs out is skipped from then on.
+- **Native AOT and trimming.** The spec response is read with `JsonDocument` and values are
+  written with `Utf8JsonWriter`, so neither needs reflection; `eventSpecMetadata` goes through
+  the source-generated context. No new package dependency.
+- **The body is unchanged without a spec or a usable key.** `failedEventIds` and
+  `eventSpecMetadata` need a spec; `publicEncryptionKey` and `encryptedPropertyValue` need a
+  usable key, with or without a spec. With neither, the wire body is identical to 1.1.x.
+- **The `netstandard2.0` build is tested.** `AvoInspector.Tests.NetStandard` runs the unit tests
+  against it in CI and before a release, including that it validates without encrypting and
+  that a pattern which times out is skipped.
+
+### Fixed — sampling and the API key match the spec (AVO-3827)
+
+- **An event is dropped only when its random draw is above `samplingRate`** (SPEC.md §7.7), as
+  in the Node, Java and Go SDKs. 1.1.x also dropped an event whose draw was exactly equal to
+  the rate. At a rate of `0.0` every event is still dropped, except a draw of exactly `0.0`.
+- **The API key is used verbatim** (SPEC.md §4.1, §7.2), as in the Node, Java and Go SDKs.
+  1.1.x trimmed it. **Behaviour change:** a key with a trailing newline, which 1.1.x repaired,
+  now throws the "API key contains a control character" `ArgumentException` at construction.
+  Strip the newline when reading the key from a file or secret store. Surrounding spaces are
+  kept in the body's `apiKey` copy.
+
 ## [1.1.1] — 2026-10-06
 
 ### Fixed
