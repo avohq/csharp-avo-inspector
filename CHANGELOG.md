@@ -56,16 +56,11 @@ fetch, no value checks, no values sent.
   against it in CI and before a release, including that it validates without encrypting and
   that a pattern which times out is skipped.
 
-### Fixed — sampling and the API key match the spec (AVO-3827)
+### Fixed — sampling keeps an event whose draw equals the rate (AVO-3827)
 
 - **An event is dropped only when its random draw is above `samplingRate`** (SPEC.md §7.7), as
   in the Node, Java and Go SDKs. 1.1.x also dropped an event whose draw was exactly equal to
   the rate. At a rate of `0.0` every event is still dropped, except a draw of exactly `0.0`.
-- **The API key is used verbatim** (SPEC.md §4.1, §7.2), as in the Node, Java and Go SDKs.
-  1.1.x trimmed it. **Behaviour change:** a key with a trailing newline, which 1.1.x repaired,
-  now throws the "API key contains a control character" `ArgumentException` at construction.
-  Strip the newline when reading the key from a file or secret store. Surrounding spaces are
-  kept in the body's `apiKey` copy.
 
 ## [1.1.1] — 2026-10-06
 
